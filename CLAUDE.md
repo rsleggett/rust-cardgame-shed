@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-A Rust implementation of the card game "Shit Head" (Shed) using the [Bevy](https://bevyengine.org/) ECS game engine (v0.14.2). One human player vs three AI opponents at a 4-seat table.
+A Rust implementation of the card game **Shed** using the [Bevy](https://bevyengine.org/) ECS game engine (v0.14.2). One human player vs three AI opponents at a 4-seat table.
 
 ## Build & Run
 
@@ -50,7 +50,7 @@ assets/fonts/
 - **Table layout**: human at bottom centre; three AIs spaced across the top. Hands are fanned (rotated, arced) at the near window edge. Face-down cards sit further from the play pile, face-up closer.
 - **Play pile** is anchored at `PLAY_PILE_X = 150.0`. Only the top *finished-animating* card shows its rank/suit text (`show_text`); the rest are face-up but hidden so the stack reads cleanly.
 
-## Shithead Rules — Implemented
+## Shed Rules — Implemented
 
 **Hand management**
 - Deal: 3 face-down, 3 face-up, 3 hand per player.
@@ -109,7 +109,7 @@ assets/fonts/
 
 - **Jack, Queen, King, Ace** — no special behaviour; treated as normal high cards (J=11, Q=12, K=13, A=14).
 - AI doesn't bundle same-rank multi-card plays.
-- No scoring / streaks / "who is the shithead" tracking across rounds.
+- No scoring / streaks / "who finished last" tracking across rounds.
 - Architecture: `GameState` still mixes game logic with entity references; no event-based system communication yet (most state transitions still happen via direct resource mutation in input/AI systems).
 - Suit symbols rely on a non-default font asset (`NotoSansSymbols2-Regular.ttf` — fetched by `scripts/download-fonts.sh`).
 - `NotoSans-Regular.ttf` from the script is actually the *variable* `NotoSans[wdth,wght].ttf` renamed; google/fonts doesn't ship the static Regular. Bevy renders the default axis fine, but swap in a static TTF if rendering ever looks off.

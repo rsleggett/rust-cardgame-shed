@@ -104,7 +104,7 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 ### Gameplay
 - Add special-card behaviour for **J, Q, K, A** (e.g. skip turn, reverse direction, force lowest, etc.) — pick a rule variant and implement.
 - AI multi-card play: bundle same-rank cards when available rather than drip-feeding them.
-- Score / streak tracking across rounds; track who is the "shithead" (last player with cards).
+- Score / streak tracking across rounds; track who finishes last.
 - Animate pile pickups (cards fly back to hand instead of teleporting).
 
 ### UX / Polish

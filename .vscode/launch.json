@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'card-game-shit-head'",
+            "name": "Debug executable 'shed'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=card-game-shit-head",
-                    "--package=card-game-shit-head"
+                    "--bin=shed",
+                    "--package=shed"
                 ],
                 "filter": {
-                    "name": "card-game-shit-head",
+                    "name": "shed",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'card-game-shit-head'",
+            "name": "Debug unit tests in executable 'shed'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=card-game-shit-head",
-                    "--package=card-game-shit-head"
+                    "--bin=shed",
+                    "--package=shed"
                 ],
                 "filter": {
-                    "name": "card-game-shit-head",
+                    "name": "shed",
                     "kind": "bin"
                 }
             },
