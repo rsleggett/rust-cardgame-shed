@@ -1,0 +1,12 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Development Background
+
+- [README.md](mdc:README.md)
+- [DEVELOPMENT.md](mdc:DEVELOPMENT.md)
+
+Please read the above files to avoid repeating mistakes
