@@ -17,7 +17,12 @@ pub struct GameState {
     pub needs_to_pickup: bool, // Indicates if the current player needs to pick up cards
     pub seven_active: bool,      // Next player must play ≤ 7
     pub any_card_playable: bool, // True after 2 is played; any card is valid next
-    pub winner: Option<usize>,   // Index of winning player, set when phase → GameOver
+    // Player indices in the order they emptied their stacks. Last entry is the "Shed".
+    // GameOver fires once this contains every player.
+    pub finish_order: Vec<usize>,
+    // Set to true the moment the human (index 0) is eliminated. Drives AI tick speedup
+    // and suppresses human input so they don't sit through the rest of the round.
+    pub spectate_mode: bool,
     pub effective_rank: Option<Rank>, // Rank the next player must beat (None = any)
     pub selected_cards: Vec<Entity>,  // Cards staged for multi-play (human player only)
     pub pending_refill: bool,         // Human needs to draw replacement cards (deferred)
@@ -29,14 +34,245 @@ pub struct Player {
     pub name: String,
     pub face_up_cards: Vec<Entity>,
     pub face_down_cards: Vec<Entity>,
-    pub hand: Vec<Entity>, // New field for the player's hand
+    pub hand: Vec<Entity>,
+    // Cached "this player has emptied all three stacks". Mirrors membership in
+    // GameState.finish_order — kept on Player for cheap reads in hot loops.
+    pub eliminated: bool,
+    /// Drives AI decision-making. Unused (but present) for the human seat.
+    pub personality: Personality,
+    /// Active buffs picked across all rounds of the current match. Reset only
+    /// when a new match starts. `used_this_round` flips back to false on each
+    /// round restart for consumables.
+    pub modifiers: Vec<ActiveBuff>,
+}
+
+impl Player {
+    pub fn has_buff(&self, kind: BuffKind) -> bool {
+        self.modifiers.iter().any(|b| b.kind == kind)
+    }
+    /// True if the consumable was available and is now consumed.
+    pub fn try_consume(&mut self, kind: BuffKind) -> bool {
+        if let Some(b) = self.modifiers.iter_mut().find(|b| b.kind == kind) {
+            if !b.used_this_round {
+                b.used_this_round = true;
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum GamePhase {
     Dealing,
+    /// Each player picks one buff for the round before play starts.
+    Drafting,
     Playing,
     GameOver,
+}
+
+/// One drafted modifier. Buffs persist across rounds; only `used_this_round`
+/// resets each round (and only matters for consumables).
+#[derive(Clone, Debug)]
+pub struct ActiveBuff {
+    pub kind: BuffKind,
+    pub used_this_round: bool,
+}
+
+/// All possible draftable perks. Order in `ALL` is the draft pool; new entries
+/// should be appended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BuffKind {
+    WildTwos,
+    HotHand,
+    Counter7,
+    BigHand,
+    WildKings,
+    HalfPickup,
+    Mulligan,
+    Peek,
+}
+
+impl BuffKind {
+    pub const ALL: &'static [BuffKind] = &[
+        BuffKind::WildTwos,
+        BuffKind::HotHand,
+        BuffKind::Counter7,
+        BuffKind::BigHand,
+        BuffKind::WildKings,
+        BuffKind::HalfPickup,
+        BuffKind::Mulligan,
+        BuffKind::Peek,
+    ];
+
+    pub fn is_consumable(self) -> bool {
+        matches!(self, BuffKind::Mulligan | BuffKind::Peek)
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            BuffKind::WildTwos => "Wild Twos",
+            BuffKind::HotHand => "Hot Hand",
+            BuffKind::Counter7 => "Counter-7",
+            BuffKind::BigHand => "Big Hand",
+            BuffKind::WildKings => "Wild Kings",
+            BuffKind::HalfPickup => "Half Pickup",
+            BuffKind::Mulligan => "Mulligan",
+            BuffKind::Peek => "Peek",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            BuffKind::WildTwos => "Your 2s also burn the pile.",
+            BuffKind::HotHand => "Your same-rank triples (3+) burn the pile.",
+            BuffKind::Counter7 => "You ignore the 'play 7 or lower' restriction.",
+            BuffKind::BigHand => "Your hand refills to 4 cards instead of 3.",
+            BuffKind::WildKings => "Your Kings also burn the pile.",
+            BuffKind::HalfPickup => "When you pick up the pile, half of it is discarded instead.",
+            BuffKind::Mulligan => "Once per round (M): swap your hand with your face-up cards.",
+            BuffKind::Peek => "Once per round (P): reveal your face-down cards for 3 seconds.",
+        }
+    }
+}
+
+/// One of three AI play styles. Picked per-AI-seat at match start; persists
+/// across rounds within the match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Personality {
+    /// Gung-ho + smart: bundles same-rank plays, proactive with burns.
+    Rob,
+    /// Cunning: never bundles, hoards specials.
+    Mike,
+    /// Chaotic: random rank choice, often wastes specials by bundling them.
+    Dave,
+}
+
+/// One AI opponent's identity for the duration of a match.
+#[derive(Clone, Debug)]
+pub struct AiPersona {
+    pub personality: Personality,
+    /// Already disambiguated when duplicates were drawn (e.g. "Dave 2").
+    pub display_name: String,
+}
+
+/// Per-match state that survives across rounds. Cleared only when a new match
+/// starts (after someone hits `target`).
+#[derive(Resource)]
+pub struct MatchState {
+    pub round: u32,
+    pub target: u32,
+    pub scores: Vec<u32>,
+    /// One persona per AI seat (length = player_count - 1, excluding the human).
+    /// Reused across rounds within a match; regenerated on `MatchState::new`.
+    pub personas: Vec<AiPersona>,
+    /// Player index of the previous round's "Shed" — they play first next round.
+    pub previous_shed: Option<usize>,
+    /// True once the current/just-finished round has been scored. Reset on
+    /// `start_next_round`. Prevents double-awarding from per-frame systems.
+    pub current_round_scored: bool,
+    /// Set once any player's cumulative score reaches `target`.
+    pub match_winner: Option<usize>,
+    /// One Vec per seat. Snapshot of `Player.modifiers` between rounds so that
+    /// rebuilding `GameState` doesn't wipe accumulated buffs. Empty on new match.
+    pub persistent_modifiers: Vec<Vec<ActiveBuff>>,
+}
+
+impl MatchState {
+    pub fn new(player_count: usize, target: u32) -> Self {
+        let ai_count = player_count.saturating_sub(1);
+        Self {
+            round: 1,
+            target,
+            scores: vec![0; player_count],
+            personas: Self::generate_personas(ai_count),
+            previous_shed: None,
+            current_round_scored: false,
+            match_winner: None,
+            persistent_modifiers: vec![Vec::new(); player_count],
+        }
+    }
+
+    /// Draws `count` personalities at random (with replacement) from the pool
+    /// and labels each with a display name. Duplicates get a numeric suffix in
+    /// pick order — e.g. drawing Dave, Mike, Dave produces "Dave", "Mike",
+    /// "Dave 2". Uses the same `rand::random` source as `prepare_dealing` to
+    /// stay dependency-free.
+    pub fn generate_personas(count: usize) -> Vec<AiPersona> {
+        let pool = [Personality::Rob, Personality::Mike, Personality::Dave];
+        let mut counts = [0u32; 3];
+        let mut out = Vec::with_capacity(count);
+        for _ in 0..count {
+            let pick = pool[(rand::random::<f32>() * pool.len() as f32) as usize % pool.len()];
+            let slot = match pick {
+                Personality::Rob => 0,
+                Personality::Mike => 1,
+                Personality::Dave => 2,
+            };
+            counts[slot] += 1;
+            let base = match pick {
+                Personality::Rob => "Rob",
+                Personality::Mike => "Mike",
+                Personality::Dave => "Dave",
+            };
+            let display_name = if counts[slot] == 1 {
+                base.to_string()
+            } else {
+                format!("{} {}", base, counts[slot])
+            };
+            out.push(AiPersona {
+                personality: pick,
+                display_name,
+            });
+        }
+        out
+    }
+
+    /// Points for a given finish position. For N players: 1st = N-1, 2nd = N-2,
+    /// …, Shed = 0. With 4 players that's the familiar 3/2/1/0.
+    pub fn score_for_position(position: usize, total: usize) -> u32 {
+        if position + 1 >= total {
+            0
+        } else {
+            (total - 1 - position) as u32
+        }
+    }
+
+    /// Award points for the just-finished round. Idempotent: no-op if already
+    /// scored this round. Returns true if scoring occurred.
+    pub fn award_round(&mut self, finish_order: &[usize]) -> bool {
+        if self.current_round_scored || finish_order.is_empty() {
+            return false;
+        }
+        let total = finish_order.len();
+        for (position, &player_idx) in finish_order.iter().enumerate() {
+            if player_idx < self.scores.len() {
+                self.scores[player_idx] += Self::score_for_position(position, total);
+            }
+        }
+        self.previous_shed = finish_order.last().copied();
+        self.current_round_scored = true;
+        if self.match_winner.is_none() {
+            // Highest cumulative score among players who have reached target.
+            self.match_winner = self
+                .scores
+                .iter()
+                .enumerate()
+                .filter(|(_, &s)| s >= self.target)
+                .max_by_key(|(_, &s)| s)
+                .map(|(i, _)| i);
+        }
+        true
+    }
+
+    pub fn start_next_round(&mut self) {
+        self.round += 1;
+        self.current_round_scored = false;
+    }
+
+    pub fn is_match_over(&self) -> bool {
+        self.match_winner.is_some()
+    }
 }
 
 impl GameState {
@@ -54,7 +290,8 @@ impl GameState {
             needs_to_pickup: false,
             seven_active: false,
             any_card_playable: false,
-            winner: None,
+            finish_order: Vec::new(),
+            spectate_mode: false,
             effective_rank: None,
             selected_cards: Vec::new(),
             pending_refill: false,
@@ -71,16 +308,71 @@ impl Default for GameState {
 
 impl GameState {
 
-    pub fn add_player(&mut self, name: String) -> usize {
+    pub fn add_player(
+        &mut self,
+        name: String,
+        personality: Personality,
+        modifiers: Vec<ActiveBuff>,
+    ) -> usize {
         let id = self.players.len();
         self.players.push(Player {
             id,
             name,
             face_up_cards: Vec::new(),
             face_down_cards: Vec::new(),
-            hand: Vec::new(), // Initialize empty hand
+            hand: Vec::new(),
+            eliminated: false,
+            personality,
+            modifiers,
         });
         id
+    }
+
+    /// If `player_index` has emptied all three stacks, mark them eliminated and
+    /// push to `finish_order`. When only one player remains, that player is the
+    /// "Shed" — also pushed to `finish_order` and the game transitions to GameOver.
+    /// Returns true if the player was just eliminated (the caller may need to
+    /// advance the turn in burn/"go again" paths).
+    pub fn check_and_eliminate(&mut self, player_index: usize) -> bool {
+        {
+            let p = &self.players[player_index];
+            if p.eliminated
+                || !p.hand.is_empty()
+                || !p.face_up_cards.is_empty()
+                || !p.face_down_cards.is_empty()
+            {
+                return false;
+            }
+        }
+        self.players[player_index].eliminated = true;
+        self.finish_order.push(player_index);
+        if player_index == 0 {
+            self.spectate_mode = true;
+        }
+
+        if self.finish_order.len() + 1 == self.players.len() {
+            if let Some(shed) = (0..self.players.len()).find(|i| !self.players[*i].eliminated) {
+                self.finish_order.push(shed);
+            }
+            self.phase = GamePhase::GameOver;
+        }
+        true
+    }
+
+    /// Advance `current_player` to the next non-eliminated seat. No-op once the
+    /// game is over. Safe because GameOver fires before fewer than 2 active
+    /// players remain.
+    pub fn advance_to_next_active(&mut self) {
+        if self.phase == GamePhase::GameOver {
+            return;
+        }
+        let len = self.players.len();
+        for _ in 0..len {
+            self.current_player = (self.current_player + 1) % len;
+            if !self.players[self.current_player].eliminated {
+                return;
+            }
+        }
     }
 
     pub fn prepare_dealing(&mut self, commands: &mut Commands, font: Handle<Font>, suit_font: Handle<Font>) {
@@ -155,7 +447,10 @@ impl GameState {
     pub fn deal_next_card(&mut self, commands: &mut Commands, cards: &Query<&Card>) -> bool {
         if self.cards_to_deal.is_empty() {
             self.dealing_in_progress = false;
-            self.phase = GamePhase::Playing;
+            // Each round routes through Drafting before play begins. The
+            // draft systems will transition to Playing once everyone has
+            // picked a buff.
+            self.phase = GamePhase::Drafting;
             return false;
         }
         
