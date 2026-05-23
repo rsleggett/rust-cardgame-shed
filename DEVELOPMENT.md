@@ -16,7 +16,6 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 - Fonts are **not tracked in git** (`assets/fonts/*.ttf` is gitignored). Run `scripts/download-fonts.sh` after cloning.
 - The script fetches from the `google/fonts` GitHub mirror. It's idempotent — re-runs skip files that already exist.
 - google/fonts only ships the variable `NotoSans[wdth,wght].ttf`. The script saves it as `NotoSans-Regular.ttf` so `asset_server.load("fonts/NotoSans-Regular.ttf")` keeps working. Bevy 0.14 renders the default axis (Regular weight) without complaint.
-- A 188 MB `NotoColorEmoji.ttf` and unused `card_suits.{png,svg}` files used to be tracked; they were removed from the index when fonts moved out of git.
 
 ### Card Bundle
 - `CardBundle` ([card_visual.rs:7](src/components/card_visual.rs#L7)) bundles the `Card` component with its `SpriteBundle`.
@@ -34,50 +33,104 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 
 ### Cards in Play Stack
 - `cards_in_play: Vec<Entity>` holds the entire pile. `current_card` is the most recent push.
-- On pick-up, the full vec is drained into the player's hand and `effective_rank` / `seven_active` / `any_card_playable` are reset.
+- On pick-up, the full vec is drained into the player's hand and `effective_rank` / `seven_active` / `any_card_playable` are reset. With the Half Pickup buff active, the older half goes to `discard_pile` instead — only the newer half (rounded up) reaches the hand.
 - On burn (10 or 4-of-a-kind), the vec is drained into `discard_pile` instead.
 
 ### Special Cards (implemented)
 - **2** — `any_card_playable = true`, `effective_rank = None`, `seven_active = false`. Next player can play anything.
 - **3** — transparent; `effective_rank` and special flags are left unchanged. Useful as filler that doesn't reset the trick.
-- **7** — `seven_active = true`, `effective_rank = Some(Seven)`. Next must play ≤ 7.
+- **7** — `seven_active = true`, `effective_rank = Some(Seven)`. Next must play ≤ 7 (unless they have Counter-7).
 - **10** — burns the pile, same player goes again.
-- **4-of-a-kind at top** — checked in `play_selection`; if the top 4 cards in the pile share a rank (within a single play or across plays), the pile burns and the player goes again.
-- All special handling lives in `play_card` (single-card / AI) and `play_selection` (multi-card / human). These two paths duplicate the rule logic — a future refactor target.
+- **4-of-a-kind at top** — checked in `play_selection`; if the top 4 cards in the pile share a rank (within a single play or across plays), the pile burns and the player goes again. With Hot Hand the threshold drops to 3.
 
-### Multi-Card Selection (human only)
-- Click toggles `selected_cards`. Selecting a different rank replaces the selection.
-- Up to 4 cards can be staged (matches the 4-of-a-kind burn).
-- `confirm_play_system` (Enter / Escape) and `handle_play_button` both feed into `play_selection`.
-
-### Win / Game Over / Restart
-- `GamePhase::GameOver` set when a player empties all three card sets (hand, face-up, face-down).
-- `game_over_screen_system` spawns a fullscreen overlay with the result.
-- `restart_game_system` listens for any keypress, despawns all `Card` / `GameOverScreen` / `PileStatusText` entities, replaces `GameState` with a fresh one, re-adds the four players, and re-runs `prepare_dealing`.
+### Multi-Card Selection (human + AI)
+- Human: click toggles `selected_cards`; selecting a different rank replaces the selection. Up to 4 cards staged, confirm with Enter / "Play Cards" / cancel with Escape.
+- AI: `ai_player_system` filters legal candidates through `can_play_card`, hands them to `ai::choose_play(personality, …)`, then routes the resulting `Vec<Entity>` through the same `play_selection` path. Personality decides single vs bundle.
 
 ### Hand Refill Timing
-- AI: refilled synchronously inside `play_card`.
+- AI: refilled synchronously inside `play_selection` when `playing_player != 0`.
 - Human: deferred via `pending_refill` + `refill_timer` (0.45s) so the played card's animation completes before new cards animate in from the draw pile centre. Without this delay the refill animation overlaps the play animation and looks chaotic.
+- Big Hand bumps the refill target to 4 (in both paths) via `target_hand_size`.
+
+---
+
+## Phase 1 — Finish Order + Spectate Speedup
+
+**Problem.** Originally the game ended the moment any player emptied their hand/face-up/face-down, which collides with how Shed actually works (the *last* player is the Shed, finishing first is *winning*).
+
+**Decisions.**
+- `GameState.winner: Option<usize>` replaced by `finish_order: Vec<usize>`. `Player.eliminated: bool` cached for cheap reads in the hot turn-advance loop.
+- Two helpers on `GameState`: `check_and_eliminate(player_index)` and `advance_to_next_active()`. The 4 win-check sites and 5 turn-advance sites collapse into these.
+- `GameOver` fires only when `finish_order.len() + 1 == players.len()` — at that point the last active seat is also pushed onto `finish_order` and the phase flips.
+- Burn paths (10 or 4-of-a-kind) had to thread the "if eliminated, advance instead of going again" branch.
+- **Spectate speedup.** `spectate_mode: bool` flips on when seat 0 is eliminated. `ai_player_system` reconciles `AITimer` duration each tick: 1.5 s normally, 0.3 s in spectate. No explicit input gating needed — `current_player` will never return to 0 once the human is out, so all existing `current_player == 0` guards naturally hold.
+
+---
+
+## Phase 2 — MatchState + Scoring + Rounds
+
+**Problem.** Every round was identical; no notion of "best of N" or carrying state across rounds.
+
+**Decisions.**
+- New `MatchState` resource separate from `GameState`. Survives round teardown; only reset on new-match restart (`*match_state = MatchState::new(...)`).
+- Scoring formula: `N - 1 - position` (3/2/1/0 for 4 players). Shed always 0.
+- `award_round` is idempotent (`current_round_scored` flag, reset by `start_next_round`) so it can be safely called from per-frame systems.
+- Match winner = first cumulative score to hit `MATCH_TARGET = 10`; tied scores broken by highest cumulative (stable iteration order).
+- **Restart split.** `restart_game_system` branches on `match_state.is_match_over()`. New match: fully reset `MatchState`. Next round: bump round, keep scores, and set `current_player = previous_shed` so the previous Shed plays first (Shed punishment).
+- Score HUD lives in its own widget at top-right, persists across restarts, just reads state each frame.
+
+---
+
+## Phase 3 — AI Personalities + Multi-Card AI
+
+**Problem.** Three AIs were identical; AI couldn't bundle multi-card plays; dealing animation was too slow.
+
+**Decisions.**
+- `Personality { Rob, Mike, Dave }` enum on `Player`. `MatchState.personas: Vec<AiPersona>` (display name + personality) populated by `MatchState::generate_personas` — random with replacement, duplicates suffixed (`"Dave"`, `"Dave 2"`). Personas persist across rounds; reshuffle on new match.
+- Personality logic split into `src/ai.rs`. Single entry point `choose_play(personality, candidates, cards, from_face_down) -> Vec<Entity>`; one private function per personality. Face-down play is always blind and personality-agnostic.
+- **AI now uses `play_selection`** (the same path as the human). `play_selection`'s refill is branched: defer for `playing_player == 0`, inline for AI. `play_card` was deleted entirely — the rule logic lives in one place now.
+- `DEAL_INTERVAL` constant (0.15s) replaces the hardcoded 0.5s. Total deal time dropped from ~18s to ~5s.
+- `add_match_players` helper centralises the four `add_player` calls used by `setup_game` and both branches of `restart_game_system`.
+
+---
+
+## Phase 4 — Per-Round Buff Draft
+
+**Problem.** Rounds were mechanically identical; no Balatro-style "run" feel; no rubber-band for the Shed.
+
+**Decisions.**
+- New `GamePhase::Drafting` between `Dealing` and `Playing`. `deal_next_card` transitions to `Drafting` (not `Playing`); `apply_picks_system` flips to `Playing` once every seat has chosen.
+- **Cumulative buffs across the match.** `Player.modifiers: Vec<ActiveBuff>` grows each round. Survives round teardown via `MatchState.persistent_modifiers` (per-seat snapshot). `add_match_players` restores them on every round restart and resets each consumable's `used_this_round` to false. New match → fresh `MatchState` → empty persistent modifiers.
+- **Shed rubber-band: bigger draft pool.** Pool size 5 for the previous Shed, 3 for everyone else. Round 1 (no previous Shed) → everyone gets 3. Pool generation excludes buffs the player already has, so duplicates are avoided.
+- **Buff catalogue (v1).** 6 passives + 2 consumables — see the table in CLAUDE.md. We swapped the originally planned "Steady Hand" and "Sticky Fingers" for "Wild Kings" and "Half Pickup" — the originals required new UI for partial-pile choices, the replacements drop in cleanly with existing rule paths.
+- **Consumables refresh, don't deplete.** A consumable buff stays in `modifiers` forever; only `used_this_round` resets per round. So drafting Mulligan in round 1 means a Mulligan available every round of the match.
+- **Rule-path hooks.** `can_play_card` gained a `has_counter7: bool` parameter (4 call sites updated). `play_selection`'s burn check now reads `HotHand` (lowers threshold), `WildTwos`, `WildKings` per-player. `target_hand_size(player)` drives both refill loops (Big Hand = 4). `pickup_cards_in_play` splits the pile when Half Pickup is active.
+- **Peek visual** is a `PeekRevealTimer` resource (`f32`). `update_card_face_up_state` reads it and reveals the human's face-down cards while it's positive. `tick_peek_timer` decrements each frame.
+- **AI draft picks are random** — personality-aware preferences are deliberately out of scope for v1.
+
+### Trade-offs accepted
+- **Single overlay, no AI pick reveal.** The draft UI shows the human's options only; AI picks happen invisibly. Cleaner UX, less coupling, easier to extend later.
+- **No pool exhaustion handling beyond an `Mulligan` fallback** for AI seats. With 8 buffs and 5-round matches, hitting empty is rare.
+- **No duplicate suppression in `apply_picks_system` for the *human*.** The pool already excludes owned kinds, so a duplicate can only happen via the AI fallback path; `apply_picks_system` guards anyway.
 
 ---
 
 ## ECS Architecture
 
 ### Current Shape
-- `GameState` holds *both* game-rule state (turn, phase, flags) *and* entity references (player card vecs, pile vecs). This is convenient but mixes concerns.
-- Systems mutate `GameState` directly rather than dispatching events. The one event currently in use is `InvalidCardClicked`, which carries visual feedback only.
+- `GameState` holds both round-scoped rule state and entity references (player card vecs, pile vecs). `MatchState` is the match-scoped sibling; `DraftState` is the draft-scoped sibling. Resource boundaries roughly match lifecycle.
+- Systems mutate state directly rather than dispatching events. The one event currently in use is `InvalidCardClicked`, which carries visual feedback only.
 - `update_card_face_up_state` reads game state and writes component flags every frame — works but is essentially a reconciler.
 
 ### Plugin Layout
-- `GamePlugin` ([game_plugin.rs:38](src/game_plugin.rs#L38)) registers everything: resources, the `InvalidCardClicked` event, `setup_game`, and the long Update tuple.
-- `CardRendererPlugin` ([card_renderer.rs:19](src/rendering/card_renderer.rs#L19)) owns camera setup, the pickup highlight sprite, animation, layout, and visuals.
+- `GamePlugin` registers everything: resources, the `InvalidCardClicked` event, `setup_game`, and two Update tuples (split because the system list crossed Bevy 0.14's 20-system tuple ceiling once the draft systems landed).
+- `CardRendererPlugin` owns camera setup, the pickup highlight sprite, animation, layout, and visuals.
 - Plugins are not currently ordered with `.before()` / `.after()`; the system tuple order is the only sequencing.
 
 ### Known Architectural Issues
-- Rule logic is duplicated between `play_card` (single, AI) and `play_selection` (multi, human).
 - `GameState` should arguably split into `GameRules` (transient flags, turn, phase) and `GameBoard` (entity collections).
-- Most state transitions happen via direct resource mutation — would benefit from an event layer (`CardPlayedEvent`, `PileBurnedEvent`, `TurnEndedEvent`).
-- The `update_game_state` system is currently a no-op left as a placeholder.
+- Most state transitions happen via direct resource mutation — would benefit from an event layer (`CardPlayedEvent`, `PileBurnedEvent`, `TurnEndedEvent`, `BuffPickedEvent`).
+- The `update_game_state` system is currently a no-op placeholder.
 
 ---
 
@@ -93,6 +146,7 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 ### Hand Fan
 - Constants in `card_constants.rs`: `HAND_FAN_STEP = 36px`, `HAND_FAN_ANGLE = 5°`, `HAND_FAN_ARC = 4px`.
 - Each card in hand is offset horizontally from centre, rotated proportionally, and dropped vertically by `offset.abs() * arc`. Bottom and top players use opposite rotation signs so both fans curve "outward" from the table.
+- **Big Hand caveat:** the fan layout assumes 3 hand slots. With Big Hand active the 4th card overlaps the 3rd visually (data is correct, layout isn't aware). Easy fix in a follow-up.
 
 ### Hover / Selection Raise
 - Hovered or selected hand cards are pushed 20px toward the play pile (positive for bottom, negative for top). Done inside `layout_cards` so it stays in lockstep with the rest of the layout each frame.
@@ -101,33 +155,41 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 
 ## Outstanding Work
 
-### Gameplay
-- Add special-card behaviour for **J, Q, K, A** (e.g. skip turn, reverse direction, force lowest, etc.) — pick a rule variant and implement.
-- AI multi-card play: bundle same-rank cards when available rather than drip-feeding them.
-- Score / streak tracking across rounds; track who finishes last.
-- Animate pile pickups (cards fly back to hand instead of teleporting).
+### Animation polish (next iteration focus)
+- **Pile pickup**: cards teleport into the player's hand. Animate them flying back, especially for Half Pickup which splits to discard.
+- **Burn**: 10 / 4-of-a-kind / Wild Twos / Wild Kings cards teleport to discard. Animate the burn off the pile (could be a satisfying flash + sweep).
+- **Draft pick**: clicking a buff dismisses the overlay instantly. A brief confirm flourish would sell the choice.
+- **Active-seat indicator**: nothing visually signals whose turn it is — pulsing border on the active seat would help.
+- **Pile size**: no count badge or ghost stack — the pile size is invisible until you read the rule text.
+- **AI turn telegraph**: AIs play with no warning. A small "thinking" indicator before the play would smooth the rhythm.
+
+### Core gameplay loop (next iteration focus)
+- **J, Q, A** still have no special behaviour. Pick a rule variant per rank (skip turn, reverse direction, force lowest, mirror last, etc.).
+- **AI persona-aware draft picks**: Mike hoards consumables, Dave picks chaotically, Rob picks aggressive burn buffs.
+- **More buffs**: cards with rare-tier rolls, anti-buffs (drawbacks for big rewards), buffs that target opponents.
+- **Round-result peek**: show what each AI drafted in a panel after the round ends.
+- **Per-round stat summary**: turns taken, biggest burn, etc. Adds texture to the score screen.
 
 ### UX / Polish
-- Visual indicator for pile size (count badge, fanned ghost cards).
-- Animate the 10/4-of-a-kind burn (cards fly off to a discard area).
-- AI turn indicator (whose turn is it, highlight their seat).
-- Settings: AI count, AI speed, optional rule variants.
+- Settings: AI count, AI speed, match target, optional rule variants.
+- Pause / restart hotkey.
+- "Any key on Game Over" should ignore `M` and `P` (those activate consumables and shouldn't double as advance-round).
+- HUD font scaling / placement tuning.
 
 ### Architecture
-- De-duplicate `play_card` and `play_selection`.
 - Split `GameState` into rules + entity references.
-- Introduce events for card-played / pile-burned / turn-changed; let visual and audio systems subscribe instead of polling resource state.
-- Add system ordering for the systems whose order currently matters implicitly (e.g. `update_card_face_up_state` must run after `play_card` and before `update_card_visuals`).
+- Introduce events for card-played / pile-burned / turn-changed / buff-picked; let visual and audio systems subscribe instead of polling resource state.
+- Add system ordering for the systems whose order currently matters implicitly.
 
 ### Quality
-- No automated tests yet. Card rule logic in `can_play_card` and the burn detection in `play_selection` are pure functions that could be unit-tested without Bevy.
-- Manual test loop: `cargo run`, deal, play a few hands per AI, trigger a 10-burn, trigger a 4-of-a-kind burn, force a pickup, watch the game over / restart flow.
+- No automated tests yet. Pure functions that are easy first targets: `can_play_card`, `MatchState::score_for_position`, `MatchState::award_round`, the burn-check logic inside `play_selection` (after extraction), `ai::choose_play` per personality, `roll_pool`.
+- Manual test loop: `cargo run`, deal, play a few hands per AI, trigger a 10-burn, trigger a 4-of-a-kind burn, force a pickup, draft a buff, play it, watch finish-order + score across rounds, win a match.
 
 ---
 
 ## Reference: System Wiring
 
-`GamePlugin` Update systems, in declared order ([game_plugin.rs:48](src/game_plugin.rs#L48)):
+`GamePlugin` Update systems, in declared order ([game_plugin.rs](src/game_plugin.rs)). They are split across two `add_systems(Update, ...)` calls because the list exceeded Bevy 0.14's 20-tuple ceiling.
 
 | System | Purpose |
 |---|---|
@@ -139,17 +201,26 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 | `handle_play_button` | bottom-centre "Play Cards" button |
 | `update_play_button_style` | green when armed, grey otherwise |
 | `deal_cards_system` | tick `DealTimer`, deal next card |
-| `update_card_face_up_state` | reconcile `is_face_up` / `show_text` / hover / selection flags |
+| `update_card_face_up_state` | reconcile `is_face_up` / `show_text` / hover / selection / peek-reveal flags |
 | `draw_first_card_system` | flip the starter card after dealing finishes |
 | `draw_refill_system` | deferred refill for the human's hand |
 | `check_valid_plays_system` | set `needs_to_pickup` when active player has no legal move |
 | `handle_card_pickup_system` | Space picks up for the human |
-| `ai_player_system` | tick `AITimer`, pick the best legal play |
+| `ai_player_system` | tick `AITimer`, run `ai::choose_play`, dispatch via `play_selection` |
 | `update_pile_status_text` | rule-text label above the pile |
-| `game_over_screen_system` | spawn overlay on `GameOver` |
-| `restart_game_system` | any keypress on game over → fresh deal |
+| `update_score_hud` | round, target, scores, per-player buffs |
+| `game_over_screen_system` | spawn overlay on `GameOver`, award round points |
+| `restart_game_system` | any keypress on game over → next round or new match |
+| `setup_draft_system` | populate `DraftState.pools` on entry to `Drafting` |
+| `draft_screen_system` | spawn the human's clickable buff overlay |
+| `handle_draft_click` | record human's pick on click |
+| `ai_draft_system` | AI seats auto-pick instantly |
+| `apply_picks_system` | push picks → `modifiers`, snapshot to `persistent_modifiers`, advance to `Playing` |
+| `handle_mulligan_key` | M: swap hand ↔ face-up (consumes Mulligan) |
+| `handle_peek_key` | P: arm `PeekRevealTimer` (consumes Peek) |
+| `tick_peek_timer` | count down the peek reveal |
 
-`CardRendererPlugin` Update systems ([card_renderer.rs:22](src/rendering/card_renderer.rs#L22)):
+`CardRendererPlugin` Update systems:
 
 | System | Purpose |
 |---|---|

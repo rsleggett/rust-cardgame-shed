@@ -1,8 +1,24 @@
+use std::time::Duration;
+
 use bevy::prelude::*;
-use crate::components::game::{GameState, GamePhase};
+use crate::components::game::{
+    ActiveBuff, BuffKind, GamePhase, GameState, MatchState, Personality,
+};
 use crate::components::card::{Card, Rank};
 use crate::rendering::card_constants::{CARD_HEIGHT, CARD_WIDTH, PLAY_PILE_X, Z_INDEX_STEP};
 use crate::rendering::card_renderer::{CardRendererPlugin, CardAnimation};
+
+const AI_TICK_NORMAL: f32 = 1.5;
+const AI_TICK_SPECTATE: f32 = 0.3;
+/// Seconds between dealing each card during round setup. 36 cards × this value
+/// is the total deal time.
+const DEAL_INTERVAL: f32 = 0.15;
+
+/// Number of seats at the table. Used both for player setup and for sizing
+/// MatchState.scores. Change this and the seat-positioning code together.
+const PLAYER_COUNT: usize = 4;
+/// Cumulative points needed to win a match.
+const MATCH_TARGET: u32 = 10;
 
 
 #[derive(Resource)]
@@ -19,6 +35,48 @@ struct PileStatusText;
 
 #[derive(Component)]
 struct PlayButton;
+
+/// Marker on the always-visible score widget (top-right of the screen).
+#[derive(Component)]
+struct ScoreHud;
+
+/// Marker on the inner Text node of the score widget. Updated each frame.
+#[derive(Component)]
+struct ScoreHudText;
+
+/// Marker on the full-screen draft overlay (one per round).
+#[derive(Component)]
+struct DraftScreen;
+
+/// Marker on each clickable buff row inside the draft overlay.
+#[derive(Component)]
+struct DraftOption(BuffKind);
+
+/// Counts down while the human's face-down cards (and the top draw card) are
+/// shown face-up because the human triggered Peek.
+#[derive(Resource, Default)]
+struct PeekRevealTimer(f32);
+
+/// Per-round draft state: one pool per seat, one optional pick per seat.
+/// Re-populated by `setup_draft_system` whenever phase enters Drafting.
+#[derive(Resource, Default)]
+struct DraftState {
+    pub pools: Vec<Vec<BuffKind>>,
+    pub picks: Vec<Option<BuffKind>>,
+}
+
+impl DraftState {
+    fn reset(&mut self, player_count: usize) {
+        self.pools.clear();
+        self.pools.resize_with(player_count, Vec::new);
+        self.picks.clear();
+        self.picks.resize(player_count, None);
+    }
+
+    fn all_picked(&self) -> bool {
+        !self.picks.is_empty() && self.picks.iter().all(Option::is_some)
+    }
+}
 
 /// Fires when the player clicks a card that cannot legally be played right now.
 #[derive(Event)]
@@ -39,8 +97,11 @@ impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(CardRendererPlugin)
             .insert_resource(GameState::new())
-            .insert_resource(DealTimer(Timer::from_seconds(0.5, TimerMode::Repeating)))
-            .insert_resource(AITimer(Timer::from_seconds(1.5, TimerMode::Repeating)))
+            .insert_resource(MatchState::new(PLAYER_COUNT, MATCH_TARGET))
+            .insert_resource(DraftState::default())
+            .insert_resource(PeekRevealTimer::default())
+            .insert_resource(DealTimer(Timer::from_seconds(DEAL_INTERVAL, TimerMode::Repeating)))
+            .insert_resource(AITimer(Timer::from_seconds(AI_TICK_NORMAL, TimerMode::Repeating)))
             .insert_resource(HoveredCard::default())
             .insert_resource(InvalidFeedbackTimer::default())
             .add_event::<InvalidCardClicked>()
@@ -61,21 +122,64 @@ impl Plugin for GamePlugin {
                 handle_card_pickup_system,
                 ai_player_system,
                 update_pile_status_text,
+                update_score_hud,
                 game_over_screen_system,
                 restart_game_system,
+            ))
+            .add_systems(Update, (
+                // Draft + consumables — grouped because the first set is at the 20-system limit.
+                setup_draft_system,
+                draft_screen_system,
+                handle_draft_click,
+                ai_draft_system,
+                apply_picks_system,
+                handle_mulligan_key,
+                handle_peek_key,
+                tick_peek_timer,
             ));
+    }
+}
+
+/// Seats the human at index 0, then one Player per persona on MatchState.
+/// Used on startup, on next-round restart, and on new-match restart so the
+/// labels and personalities always line up with `match_state.personas`. Per-seat
+/// modifiers are restored from `match_state.persistent_modifiers` so that buffs
+/// carry over between rounds — with every consumable's `used_this_round` reset
+/// for the new round.
+fn add_match_players(game_state: &mut GameState, match_state: &MatchState) {
+    let mods_for = |seat: usize| -> Vec<ActiveBuff> {
+        match_state
+            .persistent_modifiers
+            .get(seat)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut b| {
+                b.used_this_round = false;
+                b
+            })
+            .collect()
+    };
+
+    // Human's personality is a placeholder — the AI dispatcher never reads it.
+    game_state.add_player("You".to_string(), Personality::Rob, mods_for(0));
+    for (i, persona) in match_state.personas.iter().enumerate() {
+        let seat = i + 1;
+        game_state.add_player(
+            persona.display_name.clone(),
+            persona.personality,
+            mods_for(seat),
+        );
     }
 }
 
 fn setup_game(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
+    match_state: Res<MatchState>,
     asset_server: Res<AssetServer>,
 ) {
-    game_state.add_player("Player".to_string());
-    game_state.add_player("AI 1".to_string());
-    game_state.add_player("AI 2".to_string());
-    game_state.add_player("AI 3".to_string());
+    add_match_players(&mut game_state, &match_state);
 
     let font = asset_server.load("fonts/NotoSans-Regular.ttf");
     let suit_font = asset_server.load("fonts/NotoSansSymbols2-Regular.ttf");
@@ -115,11 +219,49 @@ fn setup_game(
     )).with_children(|parent| {
         parent.spawn(TextBundle::from_section(
             "Play Cards",
-            TextStyle { font, font_size: 18.0, color: Color::WHITE },
+            TextStyle { font: font.clone(), font_size: 18.0, color: Color::WHITE },
         ));
     });
 
+    spawn_score_hud(&mut commands, font);
+
     info!("Game setup complete! Ready to deal cards.");
+}
+
+/// Spawns the top-right round/score widget. Persists across restarts; its text
+/// is rewritten each frame by `update_score_hud`.
+fn spawn_score_hud(commands: &mut Commands, font: Handle<Font>) {
+    commands
+        .spawn((
+            ScoreHud,
+            NodeBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(12.0),
+                    right: Val::Px(12.0),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(2.0),
+                    min_width: Val::Px(170.0),
+                    ..default()
+                },
+                background_color: Color::srgba(0.0, 0.0, 0.0, 0.45).into(),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                ScoreHudText,
+                TextBundle::from_section(
+                    "",
+                    TextStyle {
+                        font,
+                        font_size: 14.0,
+                        color: Color::srgba(1.0, 1.0, 1.0, 0.95),
+                    },
+                ),
+            ));
+        });
 }
 
 fn update_game_state(_game_state: Res<GameState>) {}
@@ -139,6 +281,7 @@ fn deal_cards_system(
 fn update_card_face_up_state(
     game_state: Res<GameState>,
     hovered: Res<HoveredCard>,
+    peek_timer: Res<PeekRevealTimer>,
     animating: Query<Entity, With<CardAnimation>>,
     time: Res<Time>,
     mut cards: Query<(Entity, &mut Card)>,
@@ -148,6 +291,8 @@ fn update_card_face_up_state(
     let top_visible = game_state.cards_in_play.iter().rev()
         .find(|&&e| !animating.contains(e))
         .copied();
+
+    let peek_active = peek_timer.0 > 0.0;
 
     for (card_entity, mut card) in cards.iter_mut() {
         card.is_hovered = hovered.0 == Some(card_entity);
@@ -167,8 +312,10 @@ fn update_card_face_up_state(
             }
             if player.face_down_cards.contains(&card_entity) {
                 is_in_player_hand = true;
-                card.is_face_up = false;
-                card.show_text = false;
+                // Peek reveals the human's face-down cards for a few seconds.
+                let reveal = peek_active && player_index == 0;
+                card.is_face_up = reveal;
+                card.show_text = reveal;
                 break;
             }
             if player.hand.contains(&card_entity) {
@@ -225,6 +372,11 @@ fn has_valid_play(game_state: &GameState, cards: &Query<&Card>, player_index: us
     let acp = game_state.any_card_playable;
     let effective_rank = game_state.effective_rank;
     let draw_pile_not_empty = !game_state.draw_pile.is_empty();
+    let has_counter7 = game_state
+        .players
+        .get(player_index)
+        .map(|p| p.has_buff(BuffKind::Counter7))
+        .unwrap_or(false);
 
     if let Some(player) = game_state.players.get(player_index) {
         let sources: &[&[Entity]] = if draw_pile_not_empty || !player.hand.is_empty() {
@@ -237,7 +389,7 @@ fn has_valid_play(game_state: &GameState, cards: &Query<&Card>, player_index: us
         for &source in sources {
             for &card_entity in source {
                 if let Ok(card) = cards.get(card_entity) {
-                    if can_play_card(card, effective_rank, sa, acp) {
+                    if can_play_card(card, effective_rank, sa, acp, has_counter7) {
                         return true;
                     }
                 }
@@ -252,6 +404,7 @@ fn can_play_card(
     effective_rank: Option<Rank>,
     seven_active: bool,
     any_card_playable: bool,
+    has_counter7: bool,
 ) -> bool {
     // 2, 3, and 10 are always playable
     if matches!(card.rank, Rank::Two | Rank::Three | Rank::Ten) {
@@ -260,7 +413,7 @@ fn can_play_card(
     if any_card_playable {
         return true;
     }
-    if seven_active {
+    if seven_active && !has_counter7 {
         return (card.rank as u8) <= (Rank::Seven as u8);
     }
     if let Some(r) = effective_rank {
@@ -270,108 +423,50 @@ fn can_play_card(
     }
 }
 
+/// Per-player hand size. Big Hand drafted? You refill to 4.
+fn target_hand_size(player: &crate::components::game::Player) -> usize {
+    if player.has_buff(BuffKind::BigHand) { 4 } else { 3 }
+}
 
 fn pickup_cards_in_play(game_state: &mut GameState, player_index: usize) {
-    if let Some(player) = game_state.players.get_mut(player_index) {
-        for &card_entity in &game_state.cards_in_play {
-            player.hand.push(card_entity);
+    let half_pickup = game_state
+        .players
+        .get(player_index)
+        .map(|p| p.has_buff(BuffKind::HalfPickup))
+        .unwrap_or(false);
+    let pile_len = game_state.cards_in_play.len();
+    let to_hand = if half_pickup {
+        // Keep the most recent half (rounded up). Oldest cards are discarded.
+        pile_len.div_ceil(2)
+    } else {
+        pile_len
+    };
+    let to_discard = pile_len - to_hand;
+
+    let mut drained = std::mem::take(&mut game_state.cards_in_play).into_iter();
+    for _ in 0..to_discard {
+        if let Some(e) = drained.next() {
+            game_state.discard_pile.push(e);
         }
-        info!("Player {} picked up {} cards", player_index, game_state.cards_in_play.len());
     }
-    game_state.cards_in_play.clear();
+    if let Some(player) = game_state.players.get_mut(player_index) {
+        for e in drained {
+            player.hand.push(e);
+        }
+        if half_pickup {
+            info!(
+                "Player {} picked up {} (Half Pickup: {} discarded)",
+                player_index, to_hand, to_discard
+            );
+        } else {
+            info!("Player {} picked up {} cards", player_index, to_hand);
+        }
+    }
     game_state.current_card = None;
     game_state.effective_rank = None;
     game_state.seven_active = false;
     game_state.any_card_playable = false;
     game_state.selected_cards.clear();
-}
-
-fn play_card(
-    commands: &mut Commands,
-    game_state: &mut GameState,
-    card_entity: Entity,
-    _hand_index: usize,
-    rank: Rank,
-    start_pos: Vec3,
-) {
-    game_state.current_card = Some(card_entity);
-    game_state.cards_in_play.push(card_entity);
-
-    let target_z = 500.0 + game_state.cards_in_play.len() as f32 * Z_INDEX_STEP;
-    commands.entity(card_entity).insert(CardAnimation {
-        target_position: Vec3::new(PLAY_PILE_X, 0.0, target_z),
-        start_position: start_pos,
-        progress: 0.0,
-        speed: 3.0,
-    });
-
-    let playing_player = game_state.current_player;
-
-    // Remove from player's collection and refill hand
-    if let Some(player) = game_state.players.get_mut(playing_player) {
-        if let Some(pos) = player.face_up_cards.iter().position(|&e| e == card_entity) {
-            player.face_up_cards.remove(pos);
-        } else if let Some(pos) = player.face_down_cards.iter().position(|&e| e == card_entity) {
-            player.face_down_cards.remove(pos);
-        } else if let Some(pos) = player.hand.iter().position(|&e| e == card_entity) {
-            player.hand.remove(pos);
-        }
-        while player.hand.len() < 3 && !game_state.draw_pile.is_empty() {
-            if let Some(new_card) = game_state.draw_pile.pop() {
-                player.hand.push(new_card);
-            }
-        }
-    }
-
-    match rank {
-        Rank::Three => {
-            // Transparent — effective_rank and special flags unchanged
-        }
-        Rank::Two => {
-            game_state.seven_active = false;
-            game_state.any_card_playable = true;
-            game_state.effective_rank = None;
-            info!("2 played — any card valid next");
-        }
-        Rank::Seven => {
-            game_state.seven_active = true;
-            game_state.any_card_playable = false;
-            game_state.effective_rank = Some(Rank::Seven);
-            info!("7 played — next must play ≤ 7");
-        }
-        Rank::Ten => {
-            game_state.seven_active = false;
-            game_state.any_card_playable = false;
-            game_state.effective_rank = None;
-            // Burn the pile; same player goes again
-            game_state.discard_pile.extend(game_state.cards_in_play.drain(..));
-            game_state.current_card = None;
-            info!("10 played — pile burned, player {} goes again", playing_player);
-            let player = &game_state.players[playing_player];
-            if player.hand.is_empty() && player.face_up_cards.is_empty() && player.face_down_cards.is_empty() {
-                game_state.phase = GamePhase::GameOver;
-                game_state.winner = Some(playing_player);
-                info!("Player {} wins!", playing_player);
-            }
-            return; // same player, no turn advance
-        }
-        _ => {
-            game_state.seven_active = false;
-            game_state.any_card_playable = false;
-            game_state.effective_rank = Some(rank);
-        }
-    }
-
-    // Win check
-    let player = &game_state.players[playing_player];
-    if player.hand.is_empty() && player.face_up_cards.is_empty() && player.face_down_cards.is_empty() {
-        game_state.phase = GamePhase::GameOver;
-        game_state.winner = Some(playing_player);
-        info!("Player {} wins!", playing_player);
-        return;
-    }
-
-    game_state.current_player = (playing_player + 1) % game_state.players.len();
 }
 
 // ── systems ───────────────────────────────────────────────────────────────────
@@ -460,7 +555,7 @@ fn handle_mouse_input(
             let current_player_index = game_state.current_player;
             pickup_cards_in_play(&mut game_state, current_player_index);
             game_state.needs_to_pickup = false;
-            game_state.current_player = (current_player_index + 1) % game_state.players.len();
+            game_state.advance_to_next_active();
             return;
         }
     }
@@ -501,7 +596,14 @@ fn handle_mouse_input(
 
     if let Some(card_entity) = hit_entity {
         if let Ok(card) = cards.get(card_entity) {
-            if !can_play_card(card, game_state.effective_rank, game_state.seven_active, game_state.any_card_playable) {
+            let has_counter7 = game_state.players[0].has_buff(BuffKind::Counter7);
+            if !can_play_card(
+                card,
+                game_state.effective_rank,
+                game_state.seven_active,
+                game_state.any_card_playable,
+                has_counter7,
+            ) {
                 // Give visual feedback that this card can't be played
                 invalid_ev.send(InvalidCardClicked(card_entity));
                 return;
@@ -602,19 +704,38 @@ fn play_selection(
         }
     }
 
-    // Human hand refill is deferred — draw_refill_system animates new cards after the
-    // play animation completes. (AI uses play_card which refills immediately.)
-    game_state.pending_refill = true;
-    game_state.refill_timer = 0.45; // let the played card(s) reach the pile first
+    // Human refill is deferred so the new card animates in after the played
+    // card lands; AI refills inline (no animation needed for an unseen hand).
+    let refill_target = target_hand_size(&game_state.players[playing_player]);
+    if playing_player == 0 {
+        game_state.pending_refill = true;
+        game_state.refill_timer = 0.45;
+    } else {
+        while game_state.players[playing_player].hand.len() < refill_target
+            && !game_state.draw_pile.is_empty()
+        {
+            if let Some(new_card) = game_state.draw_pile.pop() {
+                game_state.players[playing_player].hand.push(new_card);
+            }
+        }
+    }
 
-    // 4-of-a-kind check: did this play complete 4 consecutive same-rank cards at the top?
+    // Burn check: Ten always burns. With Hot Hand the top-3 threshold replaces
+    // the standard top-4. Wild Twos / Wild Kings extend the burn list to extra
+    // ranks for the playing player only.
+    let hot_hand = game_state.players[playing_player].has_buff(BuffKind::HotHand);
+    let wild_twos = game_state.players[playing_player].has_buff(BuffKind::WildTwos);
+    let wild_kings = game_state.players[playing_player].has_buff(BuffKind::WildKings);
+    let threshold = if hot_hand { 3 } else { 4 };
     let pile_len = game_state.cards_in_play.len();
-    let top4_burn = pile_len >= 4 && {
-        let top4 = &game_state.cards_in_play[pile_len - 4..];
-        top4.iter().all(|&e| cards.get(e).map(|c| c.rank == rank).unwrap_or(false))
+    let same_top_burn = pile_len >= threshold && {
+        let top = &game_state.cards_in_play[pile_len - threshold..];
+        top.iter().all(|&e| cards.get(e).map(|c| c.rank == rank).unwrap_or(false))
     };
-
-    let burn = rank == Rank::Ten || top4_burn;
+    let burn = rank == Rank::Ten
+        || same_top_burn
+        || (rank == Rank::Two && wild_twos)
+        || (rank == Rank::King && wild_kings);
 
     if burn {
         game_state.seven_active = false;
@@ -623,12 +744,11 @@ fn play_selection(
         game_state.discard_pile.extend(game_state.cards_in_play.drain(..));
         game_state.current_card = None;
         info!("{:?} burned the pile (4-of-a-kind or 10), player {} goes again", rank, playing_player);
-        let player = &game_state.players[playing_player];
-        if player.hand.is_empty() && player.face_up_cards.is_empty() && player.face_down_cards.is_empty() {
-            game_state.phase = GamePhase::GameOver;
-            game_state.winner = Some(playing_player);
+        if game_state.check_and_eliminate(playing_player) {
+            info!("Player {} finished {}", playing_player, game_state.finish_order.len());
+            game_state.advance_to_next_active();
         }
-        return; // same player goes again
+        return;
     }
 
     match rank {
@@ -650,15 +770,10 @@ fn play_selection(
         }
     }
 
-    // Win check
-    let player = &game_state.players[playing_player];
-    if player.hand.is_empty() && player.face_up_cards.is_empty() && player.face_down_cards.is_empty() {
-        game_state.phase = GamePhase::GameOver;
-        game_state.winner = Some(playing_player);
-        return;
+    if game_state.check_and_eliminate(playing_player) {
+        info!("Player {} finished {}", playing_player, game_state.finish_order.len());
     }
-
-    game_state.current_player = (playing_player + 1) % game_state.players.len();
+    game_state.advance_to_next_active();
 }
 
 
@@ -687,12 +802,15 @@ fn handle_card_pickup_system(
         let current_player_index = game_state.current_player;
         pickup_cards_in_play(&mut game_state, current_player_index); // also clears selected_cards
         game_state.needs_to_pickup = false;
-        game_state.current_player = (current_player_index + 1) % game_state.players.len();
+        game_state.advance_to_next_active();
         info!("Player picked up cards");
     }
 }
 
-/// Smarter AI: plays lowest valid normal card first, saves specials (3, 10, 2) as fallbacks.
+/// Dispatches the active AI's move through `ai::choose_play`, then routes the
+/// selected cards through `play_selection` (same path as human plays). Each AI
+/// gets one tick per turn; if it has no legal play it marks itself for pickup
+/// and the pickup branch above handles it on the next tick.
 fn ai_player_system(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
@@ -704,6 +822,12 @@ fn ai_player_system(
     if game_state.phase != GamePhase::Playing || game_state.current_player == 0 {
         return;
     }
+    // Keep the AI tick rate aligned with spectate mode: snappy after the human
+    // is out, normal otherwise. Re-checked every frame so restarts reset for free.
+    let want_secs = if game_state.spectate_mode { AI_TICK_SPECTATE } else { AI_TICK_NORMAL };
+    if (ai_timer.0.duration().as_secs_f32() - want_secs).abs() > 0.01 {
+        ai_timer.0.set_duration(Duration::from_secs_f32(want_secs));
+    }
     if !ai_timer.0.tick(time.delta()).just_finished() {
         return;
     }
@@ -712,7 +836,7 @@ fn ai_player_system(
         let idx = game_state.current_player;
         pickup_cards_in_play(&mut game_state, idx);
         game_state.needs_to_pickup = false;
-        game_state.current_player = (idx + 1) % game_state.players.len();
+        game_state.advance_to_next_active();
         info!("AI {} picked up cards", idx);
         return;
     }
@@ -723,63 +847,46 @@ fn ai_player_system(
     let current_idx = game_state.current_player;
     let draw_pile_not_empty = !game_state.draw_pile.is_empty();
 
-    // Collect candidate cards with priority: lowest normal → 3 → 10 → 2
+    // Pick the active source pile (hand → face_up → face_down) using the same
+    // priority human play uses.
     let player = &game_state.players[current_idx];
-    let source: &[(Entity, usize, &str)] = &[];
-    let _ = source; // we build it dynamically below
-
-    // Determine which set to play from
-    let (card_slice, base_idx, source_name): (&[Entity], usize, &str) =
+    let (source, from_face_down): (Vec<Entity>, bool) =
         if draw_pile_not_empty || !player.hand.is_empty() {
-            (&player.hand, 6, "hand")
+            (player.hand.clone(), false)
         } else if !player.face_up_cards.is_empty() {
-            (&player.face_up_cards, 0, "face_up")
+            (player.face_up_cards.clone(), false)
         } else {
-            (&player.face_down_cards, 3, "face_down")
+            (player.face_down_cards.clone(), true)
         };
 
-    // Clone so we can borrow game_state mutably afterwards
-    let card_slice: Vec<Entity> = card_slice.to_vec();
+    // Filter to legal plays; personality logic chooses among these.
+    let has_counter7 = game_state.players[current_idx].has_buff(BuffKind::Counter7);
+    let candidates: Vec<Entity> = source
+        .into_iter()
+        .filter(|e| {
+            cards
+                .get(*e)
+                .map(|c| can_play_card(c, effective_rank, sa, acp, has_counter7))
+                .unwrap_or(false)
+        })
+        .collect();
 
-    let mut best_normal: Option<(Entity, usize, Rank)> = None;
-    let mut first_three: Option<(Entity, usize, Rank)> = None;
-    let mut first_ten: Option<(Entity, usize, Rank)> = None;
-    let mut first_two: Option<(Entity, usize, Rank)> = None;
+    let personality = game_state.players[current_idx].personality;
+    let selection = crate::ai::choose_play(personality, &candidates, &cards, from_face_down);
 
-    for (i, card_entity) in card_slice.iter().enumerate() {
-        if let Ok(card) = cards.get(*card_entity) {
-            if !can_play_card(card, effective_rank, sa, acp) {
-                continue;
-            }
-            match card.rank {
-                Rank::Three if first_three.is_none() => {
-                    first_three = Some((*card_entity, base_idx + i, card.rank));
-                }
-                Rank::Ten if first_ten.is_none() => {
-                    first_ten = Some((*card_entity, base_idx + i, card.rank));
-                }
-                Rank::Two if first_two.is_none() => {
-                    first_two = Some((*card_entity, base_idx + i, card.rank));
-                }
-                r if !matches!(r, Rank::Three | Rank::Ten | Rank::Two) => {
-                    if best_normal.is_none() || (r as u8) < (best_normal.unwrap().2 as u8) {
-                        best_normal = Some((*card_entity, base_idx + i, r));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    if let Some((entity, idx, rank)) = best_normal.or(first_three).or(first_ten).or(first_two) {
-        let start_pos = transforms.get(entity).map(|t| t.translation()).unwrap_or(Vec3::ZERO);
-        play_card(&mut commands, &mut game_state, entity, idx, rank, start_pos);
-        info!("AI {} played {:?} from {}", current_idx, rank, source_name);
-    } else {
+    if selection.is_empty() {
         if !game_state.needs_to_pickup {
             game_state.needs_to_pickup = true;
-            info!("AI {} needs to pick up cards", current_idx);
+            info!("AI {} ({:?}) needs to pick up cards", current_idx, personality);
         }
+    } else {
+        info!(
+            "AI {} ({:?}) playing {} card(s)",
+            current_idx,
+            personality,
+            selection.len()
+        );
+        play_selection(&mut commands, &mut game_state, &cards, &transforms, &selection);
     }
 }
 
@@ -800,8 +907,9 @@ fn draw_refill_system(
 
     let window_height = windows.single().height();
     let hand_base_y = -window_height / 2.0 + CARD_HEIGHT / 2.0;
+    let refill_target = target_hand_size(&game_state.players[0]);
 
-    while game_state.players[0].hand.len() < 3 && !game_state.draw_pile.is_empty() {
+    while game_state.players[0].hand.len() < refill_target && !game_state.draw_pile.is_empty() {
         let new_card = game_state.draw_pile.pop().unwrap();
         let hand_idx = game_state.players[0].hand.len();
         game_state.players[0].hand.push(new_card);
@@ -889,9 +997,68 @@ fn update_pile_status_text(
     };
 }
 
+fn ordinal(n: usize) -> String {
+    match n {
+        1 => "1st".into(),
+        2 => "2nd".into(),
+        3 => "3rd".into(),
+        _ => format!("{}th", n),
+    }
+}
+
+fn player_display_name(game_state: &GameState, player_idx: usize) -> String {
+    if player_idx == 0 {
+        "You".to_string()
+    } else {
+        game_state
+            .players
+            .get(player_idx)
+            .map(|p| p.name.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// Refreshes the round/score widget each frame. Cheap — single text section.
+fn update_score_hud(
+    match_state: Res<MatchState>,
+    game_state: Res<GameState>,
+    mut text_q: Query<&mut Text, With<ScoreHudText>>,
+) {
+    let Ok(mut text) = text_q.get_single_mut() else { return; };
+
+    let header = format!("Round {} · First to {}", match_state.round, match_state.target);
+    let mut body = String::new();
+    for i in 0..match_state.scores.len() {
+        let name = player_display_name(&game_state, i);
+        let score = match_state.scores[i];
+        let marker = if Some(i) == match_state.match_winner { " *" } else { "" };
+        body.push_str(&format!("\n{:<7} {:>3}{}", name, score, marker));
+
+        // Active buffs, indented under the score row. Consumables suffix with
+        // · (ready) or ✗ (used this round).
+        if let Some(player) = game_state.players.get(i) {
+            if !player.modifiers.is_empty() {
+                let mut parts = Vec::with_capacity(player.modifiers.len());
+                for b in &player.modifiers {
+                    let label = b.kind.display_name();
+                    if b.kind.is_consumable() {
+                        let mark = if b.used_this_round { "x" } else { "*" };
+                        parts.push(format!("{}{}", label, mark));
+                    } else {
+                        parts.push(label.to_string());
+                    }
+                }
+                body.push_str(&format!("\n         {}", parts.join(", ")));
+            }
+        }
+    }
+    text.sections[0].value = format!("{}{}", header, body);
+}
+
 fn game_over_screen_system(
     mut commands: Commands,
     game_state: Res<GameState>,
+    mut match_state: ResMut<MatchState>,
     screen_q: Query<Entity, With<GameOverScreen>>,
     asset_server: Res<AssetServer>,
 ) {
@@ -899,10 +1066,44 @@ fn game_over_screen_system(
         return;
     }
 
-    let msg = match game_state.winner {
-        Some(0) => "You Win!",
-        Some(_) => "You Lose!",
-        None    => "Game Over",
+    // Award round points once. Idempotent — safe to call every frame, but
+    // the screen_q.is_empty() guard above means we only get here once anyway.
+    match_state.award_round(&game_state.finish_order);
+
+    let total = game_state.players.len();
+    let human_position = game_state.finish_order.iter().position(|&i| i == 0);
+    let human_points_this_round = human_position
+        .map(|p| MatchState::score_for_position(p, total))
+        .unwrap_or(0);
+
+    let title = if let Some(winner) = match_state.match_winner {
+        if winner == 0 {
+            "Match Won!".to_string()
+        } else {
+            format!("Match Over — {} wins", player_display_name(&game_state, winner))
+        }
+    } else {
+        match human_position {
+            Some(0) => "Round Won!".to_string(),
+            Some(n) if n + 1 == total => "You're the Shed".to_string(),
+            Some(n) => format!("You finished {}", ordinal(n + 1)),
+            None => "Round Over".to_string(),
+        }
+    };
+
+    let subtitle = if match_state.is_match_over() {
+        format!("Final scores · target was {}", match_state.target)
+    } else {
+        format!(
+            "+{} points this round · {} to {}",
+            human_points_this_round, match_state.scores[0], match_state.target
+        )
+    };
+
+    let cta = if match_state.is_match_over() {
+        "Press any key for a new match"
+    } else {
+        "Press any key for the next round"
     };
 
     let font = asset_server.load("fonts/NotoSans-Regular.ttf");
@@ -917,7 +1118,7 @@ fn game_over_screen_system(
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(16.0),
+                row_gap: Val::Px(10.0),
                 ..default()
             },
             background_color: Color::srgba(0.0, 0.0, 0.0, 0.6).into(),
@@ -925,27 +1126,394 @@ fn game_over_screen_system(
         },
     )).with_children(|parent| {
         parent.spawn(TextBundle::from_section(
-            msg,
+            title,
             TextStyle {
                 font: font.clone(),
-                font_size: 80.0,
+                font_size: 64.0,
                 color: Color::WHITE,
             },
         ));
+
         parent.spawn(TextBundle::from_section(
-            "Press any key to restart",
+            subtitle,
             TextStyle {
-                font,
-                font_size: 28.0,
-                color: Color::srgba(1.0, 1.0, 1.0, 0.8),
+                font: font.clone(),
+                font_size: 18.0,
+                color: Color::srgba(1.0, 1.0, 1.0, 0.75),
             },
         ));
+
+        for (rank_idx, &player_idx) in game_state.finish_order.iter().enumerate() {
+            let label = if rank_idx + 1 == total {
+                "Shed".to_string()
+            } else {
+                ordinal(rank_idx + 1)
+            };
+            let name = player_display_name(&game_state, player_idx);
+            let cumulative = match_state.scores.get(player_idx).copied().unwrap_or(0);
+            let gained = MatchState::score_for_position(rank_idx, total);
+            let line_color = if player_idx == 0 {
+                Color::srgb(1.0, 0.85, 0.3)
+            } else {
+                Color::srgba(1.0, 1.0, 1.0, 0.85)
+            };
+            parent.spawn(TextBundle::from_section(
+                format!("{} — {}   +{}   ({} total)", label, name, gained, cumulative),
+                TextStyle {
+                    font: font.clone(),
+                    font_size: 26.0,
+                    color: line_color,
+                },
+            ));
+        }
+
+        parent.spawn(TextBundle {
+            text: Text::from_section(
+                cta,
+                TextStyle {
+                    font,
+                    font_size: 22.0,
+                    color: Color::srgba(1.0, 1.0, 1.0, 0.7),
+                },
+            ),
+            style: Style {
+                margin: UiRect::top(Val::Px(16.0)),
+                ..default()
+            },
+            ..default()
+        });
     });
 }
 
+// ── draft systems ─────────────────────────────────────────────────────────────
+
+/// One-time per round: populate the draft pools as soon as phase enters
+/// Drafting. Idempotent — the `pools.is_empty()` guard keeps it from re-running
+/// every frame while the human is reading their options.
+fn setup_draft_system(
+    mut draft_state: ResMut<DraftState>,
+    game_state: Res<GameState>,
+    match_state: Res<MatchState>,
+) {
+    if game_state.phase != GamePhase::Drafting {
+        return;
+    }
+    if !draft_state.pools.is_empty() {
+        return;
+    }
+    draft_state.reset(game_state.players.len());
+    for seat in 0..game_state.players.len() {
+        // Previous round's Shed gets a bigger pool; everyone else gets 3.
+        let size = if match_state.previous_shed == Some(seat) { 5 } else { 3 };
+        draft_state.pools[seat] = roll_pool(&game_state.players[seat].modifiers, size);
+    }
+}
+
+/// Pick `size` distinct BuffKinds at random, excluding kinds the player already
+/// owns. Falls back gracefully (returns fewer kinds) once the catalogue is
+/// exhausted — rare in a 5-round match with 8 buffs.
+fn roll_pool(owned: &[ActiveBuff], size: usize) -> Vec<BuffKind> {
+    let mut available: Vec<BuffKind> = BuffKind::ALL
+        .iter()
+        .copied()
+        .filter(|k| !owned.iter().any(|b| b.kind == *k))
+        .collect();
+    // Fisher-Yates using the same rand source the rest of the project uses.
+    for i in (1..available.len()).rev() {
+        let j = (rand::random::<f32>() * (i + 1) as f32) as usize;
+        if j <= i {
+            available.swap(i, j);
+        }
+    }
+    available.into_iter().take(size).collect()
+}
+
+/// AIs pick instantly and randomly from their pool. Personality-aware picks
+/// could be a follow-up.
+fn ai_draft_system(
+    mut draft_state: ResMut<DraftState>,
+    game_state: Res<GameState>,
+) {
+    if game_state.phase != GamePhase::Drafting {
+        return;
+    }
+    if draft_state.picks.is_empty() {
+        return; // setup hasn't run yet
+    }
+    for seat in 1..game_state.players.len() {
+        if draft_state.picks[seat].is_some() {
+            continue;
+        }
+        let pool = &draft_state.pools[seat];
+        if pool.is_empty() {
+            // Player has every buff already — skip silently.
+            draft_state.picks[seat] = Some(BuffKind::Mulligan);
+            continue;
+        }
+        let idx = (rand::random::<f32>() * pool.len() as f32) as usize;
+        let pick = pool[idx.min(pool.len() - 1)];
+        draft_state.picks[seat] = Some(pick);
+        info!(
+            "AI seat {} ({:?}) picked buff: {}",
+            seat,
+            game_state.players[seat].personality,
+            pick.display_name()
+        );
+    }
+}
+
+/// Spawn the full-screen draft overlay when entering Drafting. Stays up until
+/// `apply_picks_system` despawns it (after every seat has chosen). The overlay
+/// only shows the human's options; AI picks happen invisibly in the background.
+fn draft_screen_system(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    match_state: Res<MatchState>,
+    draft_state: Res<DraftState>,
+    screen_q: Query<Entity, With<DraftScreen>>,
+    asset_server: Res<AssetServer>,
+) {
+    if game_state.phase != GamePhase::Drafting {
+        return;
+    }
+    if !screen_q.is_empty() {
+        return;
+    }
+    if draft_state.pools.is_empty() {
+        return; // setup hasn't run yet
+    }
+    let human_pool = draft_state.pools.first().cloned().unwrap_or_default();
+    if human_pool.is_empty() {
+        return; // nothing to choose — apply_picks will fill it automatically next frame
+    }
+
+    let font = asset_server.load("fonts/NotoSans-Regular.ttf");
+    let header = if human_pool.len() >= 5 {
+        format!(
+            "Round {} · Shed bonus — pick 1 of {}",
+            match_state.round,
+            human_pool.len()
+        )
+    } else {
+        format!("Round {} · Pick a perk", match_state.round)
+    };
+
+    commands
+        .spawn((
+            DraftScreen,
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    position_type: PositionType::Absolute,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(10.0),
+                    ..default()
+                },
+                background_color: Color::srgba(0.0, 0.0, 0.0, 0.7).into(),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                header,
+                TextStyle {
+                    font: font.clone(),
+                    font_size: 36.0,
+                    color: Color::WHITE,
+                },
+            ));
+            parent.spawn(TextBundle {
+                text: Text::from_section(
+                    "Click a perk to add it to your run",
+                    TextStyle {
+                        font: font.clone(),
+                        font_size: 14.0,
+                        color: Color::srgba(1.0, 1.0, 1.0, 0.6),
+                    },
+                ),
+                style: Style {
+                    margin: UiRect::bottom(Val::Px(8.0)),
+                    ..default()
+                },
+                ..default()
+            });
+
+            for &kind in &human_pool {
+                parent
+                    .spawn((
+                        DraftOption(kind),
+                        ButtonBundle {
+                            style: Style {
+                                width: Val::Px(460.0),
+                                padding: UiRect::all(Val::Px(12.0)),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(4.0),
+                                align_items: AlignItems::FlexStart,
+                                ..default()
+                            },
+                            background_color: Color::srgba(0.15, 0.15, 0.18, 0.95).into(),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|row| {
+                        let name = if kind.is_consumable() {
+                            format!("{}  (consumable)", kind.display_name())
+                        } else {
+                            kind.display_name().to_string()
+                        };
+                        row.spawn(TextBundle::from_section(
+                            name,
+                            TextStyle {
+                                font: font.clone(),
+                                font_size: 20.0,
+                                color: Color::srgb(1.0, 0.9, 0.4),
+                            },
+                        ));
+                        row.spawn(TextBundle::from_section(
+                            kind.description(),
+                            TextStyle {
+                                font: font.clone(),
+                                font_size: 14.0,
+                                color: Color::srgba(1.0, 1.0, 1.0, 0.85),
+                            },
+                        ));
+                    });
+            }
+        });
+}
+
+fn handle_draft_click(
+    mut draft_state: ResMut<DraftState>,
+    game_state: Res<GameState>,
+    mut interaction_q: Query<
+        (&Interaction, &DraftOption, &mut BackgroundColor),
+        Changed<Interaction>,
+    >,
+) {
+    if game_state.phase != GamePhase::Drafting {
+        return;
+    }
+    let already_picked = draft_state
+        .picks
+        .first()
+        .copied()
+        .flatten()
+        .is_some();
+    for (interaction, option, mut bg) in &mut interaction_q {
+        match *interaction {
+            Interaction::Pressed => {
+                if !already_picked && !draft_state.picks.is_empty() {
+                    draft_state.picks[0] = Some(option.0);
+                    info!("You picked buff: {}", option.0.display_name());
+                }
+                *bg = Color::srgba(0.30, 0.55, 0.30, 0.98).into();
+            }
+            Interaction::Hovered => *bg = Color::srgba(0.25, 0.25, 0.30, 0.98).into(),
+            Interaction::None => *bg = Color::srgba(0.15, 0.15, 0.18, 0.95).into(),
+        }
+    }
+}
+
+/// Finalize: push each seat's pick into Player.modifiers, snapshot to MatchState
+/// so the buff survives the round-end teardown, despawn the overlay, and flip
+/// the phase to Playing so the rest of the game wakes up.
+fn apply_picks_system(
+    mut commands: Commands,
+    mut game_state: ResMut<GameState>,
+    mut match_state: ResMut<MatchState>,
+    mut draft_state: ResMut<DraftState>,
+    screen_q: Query<Entity, With<DraftScreen>>,
+) {
+    if game_state.phase != GamePhase::Drafting {
+        return;
+    }
+    if !draft_state.all_picked() {
+        return;
+    }
+    for seat in 0..game_state.players.len() {
+        if let Some(kind) = draft_state.picks[seat] {
+            // Skip duplicates so consumables can't be double-charged. The draft
+            // pool already filters owned kinds, but the AI fallback path can
+            // still pick a duplicate if the catalogue is exhausted.
+            if !game_state.players[seat].has_buff(kind) {
+                game_state.players[seat].modifiers.push(ActiveBuff {
+                    kind,
+                    used_this_round: false,
+                });
+            }
+        }
+    }
+    // Snapshot for next-round carry-over.
+    for seat in 0..game_state.players.len() {
+        if seat < match_state.persistent_modifiers.len() {
+            match_state.persistent_modifiers[seat] = game_state.players[seat].modifiers.clone();
+        }
+    }
+    for e in screen_q.iter() {
+        commands.entity(e).despawn_recursive();
+    }
+    draft_state.pools.clear();
+    draft_state.picks.clear();
+    game_state.phase = GamePhase::Playing;
+    info!("Draft complete — entering Playing");
+}
+
+// ── consumable activation ─────────────────────────────────────────────────────
+
+fn handle_mulligan_key(
+    mut game_state: ResMut<GameState>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+) {
+    if game_state.phase != GamePhase::Playing {
+        return;
+    }
+    if game_state.current_player != 0 {
+        return;
+    }
+    if !keyboard.just_pressed(KeyCode::KeyM) {
+        return;
+    }
+    let player = &mut game_state.players[0];
+    if !player.try_consume(BuffKind::Mulligan) {
+        return;
+    }
+    std::mem::swap(&mut player.hand, &mut player.face_up_cards);
+    info!("Mulligan used: hand <-> face-up swapped");
+}
+
+fn handle_peek_key(
+    mut peek_timer: ResMut<PeekRevealTimer>,
+    mut game_state: ResMut<GameState>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+) {
+    if game_state.phase != GamePhase::Playing {
+        return;
+    }
+    if !keyboard.just_pressed(KeyCode::KeyP) {
+        return;
+    }
+    let player = &mut game_state.players[0];
+    if !player.try_consume(BuffKind::Peek) {
+        return;
+    }
+    peek_timer.0 = 3.0;
+    info!("Peek used: revealing face-down cards for 3s");
+}
+
+fn tick_peek_timer(mut peek_timer: ResMut<PeekRevealTimer>, time: Res<Time>) {
+    if peek_timer.0 > 0.0 {
+        peek_timer.0 = (peek_timer.0 - time.delta_seconds()).max(0.0);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn restart_game_system(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
+    mut match_state: ResMut<MatchState>,
     keyboard: Res<ButtonInput<KeyCode>>,
     card_q: Query<Entity, With<Card>>,
     screen_q: Query<Entity, With<GameOverScreen>>,
@@ -955,17 +1523,35 @@ fn restart_game_system(
     if game_state.phase != GamePhase::GameOver { return; }
     if keyboard.get_just_pressed().next().is_none() { return; }
 
-    // Despawn all game entities
+    let match_was_over = match_state.is_match_over();
+    // The previous round's Shed deals first next round (Shed punishment). Captured
+    // before we reset MatchState in the match-over branch.
+    let dealer = match_state.previous_shed.unwrap_or(0);
+
+    // Despawn round-scoped entities. ScoreHud persists across restarts.
     for e in card_q.iter() { commands.entity(e).despawn_recursive(); }
     for e in screen_q.iter() { commands.entity(e).despawn_recursive(); }
     for e in status_q.iter() { commands.entity(e).despawn_recursive(); }
 
-    // Reset and re-deal
+    // MatchState transition first so that `add_match_players` reads the
+    // correct personas (a fresh roster on new-match, the same as before
+    // on next-round).
+    if match_was_over {
+        *match_state = MatchState::new(PLAYER_COUNT, MATCH_TARGET);
+        info!("Match reset — new opponents drawn");
+    } else {
+        match_state.start_next_round();
+        info!("Round {} starting — seat {} plays first", match_state.round, dealer);
+    }
+
+    // Reset GameState for a fresh deal.
     *game_state = GameState::new();
-    game_state.add_player("Player".to_string());
-    game_state.add_player("AI 1".to_string());
-    game_state.add_player("AI 2".to_string());
-    game_state.add_player("AI 3".to_string());
+    add_match_players(&mut game_state, &match_state);
+
+    if !match_was_over {
+        // Previous Shed plays first this round.
+        game_state.current_player = dealer.min(PLAYER_COUNT.saturating_sub(1));
+    }
 
     let font = asset_server.load("fonts/NotoSans-Regular.ttf");
     let suit_font = asset_server.load("fonts/NotoSansSymbols2-Regular.ttf");
@@ -982,6 +1568,4 @@ fn restart_game_system(
             ..default()
         },
     ));
-
-    info!("Game restarted");
 }

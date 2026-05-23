@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+mod ai;
 mod components;
 mod rendering;
 mod game_plugin;
