@@ -644,6 +644,7 @@ fn tick_last_click(mut last_click: ResMut<LastClick>, time: Res<Time>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_swap_input(
     windows: Query<&Window>,
     mut game_state: ResMut<GameState>,
@@ -651,11 +652,20 @@ fn handle_swap_input(
     transforms: Query<&GlobalTransform>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
+    button_q: Query<&Interaction, With<DoneSwapButton>>,
 ) {
     if game_state.phase != GamePhase::Swap || swap_state.human_done {
         return;
     }
     if !mouse_button_input.just_pressed(MouseButton::Left) {
+        return;
+    }
+    // The Done button overlaps the hand fan area; drop swap input when the
+    // cursor is over the button so a Done click can't also swap a card.
+    if button_q
+        .iter()
+        .any(|i| matches!(i, Interaction::Pressed | Interaction::Hovered))
+    {
         return;
     }
 
@@ -828,7 +838,9 @@ fn handle_mouse_input(
     let Some(cursor_position) = window.cursor_position() else { return; };
     let Some(world_position) = camera.viewport_to_world_2d(camera_transform, cursor_position) else { return; };
 
-    // Click play pile to pick up when required
+    // Click play pile to pick up when required. While pickup is pending, no
+    // other card interaction is allowed — the player must pick up before
+    // flipping a face-down or staging anything else.
     if game_state.needs_to_pickup && game_state.current_player == 0 {
         let in_pile = world_position.x >= PLAY_PILE_X - CARD_WIDTH / 2.0 - 12.0
             && world_position.x <= PLAY_PILE_X + CARD_WIDTH / 2.0 + 12.0
@@ -839,8 +851,8 @@ fn handle_mouse_input(
             pickup_cards_in_play(&mut game_state, current_player_index);
             game_state.needs_to_pickup = false;
             game_state.advance_to_next_active();
-            return;
         }
+        return;
     }
 
     // Only stage cards on the human player's turn
