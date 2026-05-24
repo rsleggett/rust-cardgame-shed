@@ -6,3 +6,8 @@
 # Font assets — fetched via scripts/download-fonts.sh
 assets/fonts/*.ttf
 assets/fonts/*.otf
+
+# Music assets — see scripts/download-music.sh
+assets/music/*.ogg
+assets/music/*.mp3
+assets/music/*.wav
