@@ -13,13 +13,10 @@ fn full_pickup_moves_pile_to_hand_and_clears_pile_flags() {
     let mut app = test_app();
     enter_playing(&mut app);
     let pile = spawn_ranks(&mut app, &[Rank::Five, Rank::Six, Rank::Seven]);
-    set_pile(&mut app, pile);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Seven);
-        gs.seven_active = true;
-        gs.selected_cards = vec![]; // start clean
-    }
+    set_pile(&mut app, pile, Some(Rank::Seven));
+    // seven_active isn't set by set_pile — flip it manually to verify pickup
+    // resets it.
+    app.world_mut().resource_mut::<GameState>().seven_active = true;
 
     pickup_cards_in_play(&mut app.world_mut().resource_mut::<GameState>(), 0);
 
@@ -47,7 +44,7 @@ fn half_pickup_buff_discards_oldest_half() {
         Rank::Five,
         Rank::Six,   // newest
     ]);
-    set_pile(&mut app, pile);
+    set_pile(&mut app, pile, None);
 
     pickup_cards_in_play(&mut app.world_mut().resource_mut::<GameState>(), 0);
 
@@ -62,7 +59,7 @@ fn half_pickup_with_even_count_splits_evenly() {
     enter_playing(&mut app);
     give_buff(&mut app, 0, BuffKind::HalfPickup);
     let pile = spawn_ranks(&mut app, &[Rank::Two, Rank::Three, Rank::Four, Rank::Five]);
-    set_pile(&mut app, pile);
+    set_pile(&mut app, pile, None);
 
     pickup_cards_in_play(&mut app.world_mut().resource_mut::<GameState>(), 0);
 
@@ -85,17 +82,21 @@ fn pickup_on_empty_pile_is_noop() {
 }
 
 #[test]
-fn pickup_clears_staged_selection() {
+fn pickup_clears_staged_selection_and_drains_pile() {
+    // Combined assertion: pickup both moves the pile to hand AND clears any
+    // staged play, in the same call. Previously this test ran against an
+    // empty pile and only exercised the selection-clear half.
     let mut app = test_app();
     enter_playing(&mut app);
     let stage = spawn_card(&mut app, Suit::Hearts, Rank::Four);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.selected_cards = vec![stage];
-    }
+    let pile = spawn_ranks(&mut app, &[Rank::Eight, Rank::Nine]);
+    set_pile(&mut app, pile, Some(Rank::Nine));
+    app.world_mut().resource_mut::<GameState>().selected_cards = vec![stage];
 
     pickup_cards_in_play(&mut app.world_mut().resource_mut::<GameState>(), 0);
 
     let gs = app.world().resource::<GameState>();
     assert!(gs.selected_cards.is_empty(), "Pickup clears any staged play");
+    assert_eq!(gs.players[0].hand.len(), 2, "Pile cards moved to hand");
+    assert!(gs.cards_in_play.is_empty());
 }

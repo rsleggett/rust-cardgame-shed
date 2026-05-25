@@ -30,13 +30,9 @@ fn hand_source_with_valid_card_returns_true() {
     let five = spawn_card(&mut app, Suit::Hearts, Rank::Five);
     let queen = spawn_card(&mut app, Suit::Clubs, Rank::Queen);
     let draw_filler = spawn_card(&mut app, Suit::Diamonds, Rank::Six);
-    set_pile(&mut app, vec![five]);
+    set_pile(&mut app, vec![five], Some(Rank::Five));
     set_hand(&mut app, 0, vec![queen]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.draw_pile = vec![draw_filler];
-        gs.effective_rank = Some(Rank::Five);
-    }
+    app.world_mut().resource_mut::<GameState>().draw_pile = vec![draw_filler];
 
     assert!(check_via_system(&mut app, 0));
 }
@@ -48,13 +44,9 @@ fn hand_source_with_no_valid_card_returns_false() {
     let king = spawn_card(&mut app, Suit::Hearts, Rank::King);
     let four = spawn_card(&mut app, Suit::Clubs, Rank::Four);
     let draw_filler = spawn_card(&mut app, Suit::Diamonds, Rank::Six);
-    set_pile(&mut app, vec![king]);
+    set_pile(&mut app, vec![king], Some(Rank::King));
     set_hand(&mut app, 0, vec![four]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.draw_pile = vec![draw_filler];
-        gs.effective_rank = Some(Rank::King);
-    }
+    app.world_mut().resource_mut::<GameState>().draw_pile = vec![draw_filler];
 
     assert!(!check_via_system(&mut app, 0));
 }
@@ -67,12 +59,8 @@ fn face_up_source_when_hand_and_draw_empty() {
     enter_playing(&mut app);
     let five = spawn_card(&mut app, Suit::Hearts, Rank::Five);
     let queen = spawn_card(&mut app, Suit::Clubs, Rank::Queen);
-    set_pile(&mut app, vec![five]);
+    set_pile(&mut app, vec![five], Some(Rank::Five));
     set_face_up(&mut app, 0, vec![queen]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Five);
-    }
 
     assert!(check_via_system(&mut app, 0));
 }
@@ -86,12 +74,8 @@ fn face_down_phase_always_returns_true_if_any_remain() {
     enter_playing(&mut app);
     let king = spawn_card(&mut app, Suit::Hearts, Rank::King);
     let unplayable = spawn_card(&mut app, Suit::Clubs, Rank::Four);
-    set_pile(&mut app, vec![king]);
+    set_pile(&mut app, vec![king], Some(Rank::King));
     set_face_down(&mut app, 0, vec![unplayable]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::King);
-    }
 
     assert!(check_via_system(&mut app, 0), "Face-down phase must always allow the flip");
 }
@@ -102,11 +86,7 @@ fn face_down_phase_returns_false_when_no_cards_left() {
     let mut app = test_app();
     enter_playing(&mut app);
     let king = spawn_card(&mut app, Suit::Hearts, Rank::King);
-    set_pile(&mut app, vec![king]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::King);
-    }
+    set_pile(&mut app, vec![king], Some(Rank::King));
 
     assert!(!check_via_system(&mut app, 0));
 }

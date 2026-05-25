@@ -18,21 +18,23 @@ use common::*;
 #[test]
 fn swap_phase_advances_when_human_and_ai_both_done() {
     let mut app = test_app();
+    let staged = spawn_card(&mut app, Suit::Hearts, Rank::Four);
     app.world_mut().resource_mut::<GameState>().phase = GamePhase::Swap;
     app.insert_resource(SwapState {
         human_done: true,
         ai_done: [true; 3],
-        ..Default::default()
+        human_selected_hand: Some(staged),
     });
 
     app.world_mut().run_system_once(advance_swap_phase);
 
     let gs = app.world().resource::<GameState>();
     assert_eq!(gs.phase, GamePhase::Drafting);
-    // SwapState is reset on exit so the next round starts clean.
+    // SwapState is fully reset on exit — every field should be back at default.
     let swap = app.world().resource::<SwapState>();
     assert!(!swap.human_done);
     assert!(swap.ai_done.iter().all(|&d| !d));
+    assert!(swap.human_selected_hand.is_none(), "Staged hand card cleared on exit");
 }
 
 #[test]
@@ -79,13 +81,9 @@ fn flags_pickup_when_hand_has_no_valid_play() {
     let king = spawn_card(&mut app, Suit::Hearts, Rank::King);
     let four = spawn_card(&mut app, Suit::Clubs, Rank::Four);
     let draw_filler = spawn_card(&mut app, Suit::Diamonds, Rank::Six);
-    set_pile(&mut app, vec![king]);
+    set_pile(&mut app, vec![king], Some(Rank::King));
     set_hand(&mut app, 0, vec![four]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.draw_pile = vec![draw_filler];
-        gs.effective_rank = Some(Rank::King);
-    }
+    app.world_mut().resource_mut::<GameState>().draw_pile = vec![draw_filler];
 
     app.world_mut().run_system_once(check_valid_plays_system);
 
@@ -100,13 +98,9 @@ fn does_not_flag_pickup_when_hand_has_valid_play() {
     let five = spawn_card(&mut app, Suit::Hearts, Rank::Five);
     let king = spawn_card(&mut app, Suit::Clubs, Rank::King); // King beats Five
     let draw_filler = spawn_card(&mut app, Suit::Diamonds, Rank::Six);
-    set_pile(&mut app, vec![five]);
+    set_pile(&mut app, vec![five], Some(Rank::Five));
     set_hand(&mut app, 0, vec![king]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.draw_pile = vec![draw_filler];
-        gs.effective_rank = Some(Rank::Five);
-    }
+    app.world_mut().resource_mut::<GameState>().draw_pile = vec![draw_filler];
 
     app.world_mut().run_system_once(check_valid_plays_system);
 
@@ -122,13 +116,9 @@ fn special_rank_two_satisfies_validity_check() {
     let king = spawn_card(&mut app, Suit::Hearts, Rank::King);
     let two = spawn_card(&mut app, Suit::Clubs, Rank::Two);
     let draw_filler = spawn_card(&mut app, Suit::Diamonds, Rank::Six);
-    set_pile(&mut app, vec![king]);
+    set_pile(&mut app, vec![king], Some(Rank::King));
     set_hand(&mut app, 0, vec![two]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.draw_pile = vec![draw_filler];
-        gs.effective_rank = Some(Rank::King);
-    }
+    app.world_mut().resource_mut::<GameState>().draw_pile = vec![draw_filler];
 
     app.world_mut().run_system_once(check_valid_plays_system);
 
@@ -141,7 +131,7 @@ fn no_op_outside_playing_phase() {
     let mut app = test_app();
     // Stay in Dealing.
     let king = spawn_card(&mut app, Suit::Hearts, Rank::King);
-    set_pile(&mut app, vec![king]);
+    set_pile(&mut app, vec![king], Some(Rank::King));
 
     app.world_mut().run_system_once(check_valid_plays_system);
 

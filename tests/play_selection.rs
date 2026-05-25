@@ -19,13 +19,9 @@ fn ten_burns_pile_and_same_player_goes_again() {
     let ten = spawn_card(&mut app, Suit::Clubs, Rank::Ten);
     // Give the player a face-down so they're not eliminated by emptying their hand.
     let backup = spawn_card(&mut app, Suit::Diamonds, Rank::Four);
-    set_pile(&mut app, vec![five]);
+    set_pile(&mut app, vec![five], Some(Rank::Five));
     set_hand(&mut app, 0, vec![ten]);
     set_face_down(&mut app, 0, vec![backup]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Five);
-    }
 
     run_play_selection(&mut app, vec![ten]);
 
@@ -44,13 +40,9 @@ fn four_of_a_kind_burns_across_multi_play() {
     let pile_fives = spawn_ranks(&mut app, &[Rank::Two, Rank::Five, Rank::Five, Rank::Five]);
     let hand_five = spawn_card(&mut app, Suit::Spades, Rank::Five);
     let backup = spawn_card(&mut app, Suit::Diamonds, Rank::Four);
-    set_pile(&mut app, pile_fives);
+    set_pile(&mut app, pile_fives, Some(Rank::Five));
     set_hand(&mut app, 0, vec![hand_five]);
     set_face_down(&mut app, 0, vec![backup]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Five);
-    }
 
     run_play_selection(&mut app, vec![hand_five]);
 
@@ -67,13 +59,9 @@ fn hot_hand_burns_three_of_a_kind() {
     let pile = spawn_ranks(&mut app, &[Rank::Two, Rank::Six, Rank::Six]);
     let hand_six = spawn_card(&mut app, Suit::Spades, Rank::Six);
     let backup = spawn_card(&mut app, Suit::Diamonds, Rank::Four);
-    set_pile(&mut app, pile);
+    set_pile(&mut app, pile, Some(Rank::Six));
     set_hand(&mut app, 0, vec![hand_six]);
     set_face_down(&mut app, 0, vec![backup]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Six);
-    }
 
     run_play_selection(&mut app, vec![hand_six]);
 
@@ -88,12 +76,8 @@ fn two_resets_pile_and_advances_turn() {
     enter_playing(&mut app);
     let nine = spawn_card(&mut app, Suit::Hearts, Rank::Nine);
     let two = spawn_card(&mut app, Suit::Clubs, Rank::Two);
-    set_pile(&mut app, vec![nine]);
+    set_pile(&mut app, vec![nine], Some(Rank::Nine));
     set_hand(&mut app, 0, vec![two]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Nine);
-    }
 
     run_play_selection(&mut app, vec![two]);
 
@@ -111,12 +95,8 @@ fn three_is_transparent() {
     enter_playing(&mut app);
     let nine = spawn_card(&mut app, Suit::Hearts, Rank::Nine);
     let three = spawn_card(&mut app, Suit::Clubs, Rank::Three);
-    set_pile(&mut app, vec![nine]);
+    set_pile(&mut app, vec![nine], Some(Rank::Nine));
     set_hand(&mut app, 0, vec![three]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Nine);
-    }
 
     run_play_selection(&mut app, vec![three]);
 
@@ -133,12 +113,8 @@ fn seven_caps_next_player() {
     enter_playing(&mut app);
     let five = spawn_card(&mut app, Suit::Hearts, Rank::Five);
     let seven = spawn_card(&mut app, Suit::Clubs, Rank::Seven);
-    set_pile(&mut app, vec![five]);
+    set_pile(&mut app, vec![five], Some(Rank::Five));
     set_hand(&mut app, 0, vec![seven]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Five);
-    }
 
     run_play_selection(&mut app, vec![seven]);
 
@@ -155,12 +131,8 @@ fn normal_rank_sets_effective_rank_and_advances() {
     enter_playing(&mut app);
     let five = spawn_card(&mut app, Suit::Hearts, Rank::Five);
     let nine = spawn_card(&mut app, Suit::Clubs, Rank::Nine);
-    set_pile(&mut app, vec![five]);
+    set_pile(&mut app, vec![five], Some(Rank::Five));
     set_hand(&mut app, 0, vec![nine]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Five);
-    }
 
     run_play_selection(&mut app, vec![nine]);
 
@@ -172,20 +144,22 @@ fn normal_rank_sets_effective_rank_and_advances() {
 }
 
 #[test]
-fn invalid_play_triggers_pickup_pending_and_keeps_turn() {
-    // Setup: pile is a King, hand has a Four. Four is illegal (<King).
-    // (This path is reachable when the click handler relaxes validation —
-    // here we hit play_selection directly to exercise the brick branch.)
+fn invalid_face_up_play_triggers_pickup_pending_and_keeps_turn() {
+    // Face-up endgame: hand and draw pile both empty so the click handler
+    // relaxes validation and lets the player stage any face-up. Player picks
+    // a Four that bricks against the pile's King. play_selection pushes it
+    // onto the pile and sets needs_to_pickup so the next click on the pile
+    // sweeps everything (including the Four) back into hand.
     let mut app = test_app();
     enter_playing(&mut app);
     let king = spawn_card(&mut app, Suit::Hearts, Rank::King);
     let four = spawn_card(&mut app, Suit::Clubs, Rank::Four);
-    set_pile(&mut app, vec![king]);
-    set_hand(&mut app, 0, vec![four]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::King);
-    }
+    let other_face_up = spawn_card(&mut app, Suit::Spades, Rank::Six);
+    let backup = spawn_card(&mut app, Suit::Diamonds, Rank::Two);
+    set_pile(&mut app, vec![king], Some(Rank::King));
+    set_face_up(&mut app, 0, vec![four, other_face_up]);
+    set_face_down(&mut app, 0, vec![backup]);
+    // Hand + draw pile already empty by default → genuine face-up phase.
 
     run_play_selection(&mut app, vec![four]);
 
@@ -203,13 +177,9 @@ fn wild_twos_buff_burns_a_two() {
     let pile = spawn_ranks(&mut app, &[Rank::Nine]);
     let two = spawn_card(&mut app, Suit::Clubs, Rank::Two);
     let backup = spawn_card(&mut app, Suit::Diamonds, Rank::Four);
-    set_pile(&mut app, pile);
+    set_pile(&mut app, pile, Some(Rank::Nine));
     set_hand(&mut app, 0, vec![two]);
     set_face_down(&mut app, 0, vec![backup]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::Nine);
-    }
 
     run_play_selection(&mut app, vec![two]);
 
@@ -227,16 +197,12 @@ fn ai_refills_hand_inline_after_play() {
     enter_playing(&mut app);
     set_turn(&mut app, 1);
     let king = spawn_card(&mut app, Suit::Hearts, Rank::King);
-    set_pile(&mut app, vec![king]);
+    set_pile(&mut app, vec![king], Some(Rank::King));
 
     let ace = spawn_card(&mut app, Suit::Spades, Rank::Ace);
     set_hand(&mut app, 1, vec![ace]);
     let draw = spawn_ranks(&mut app, &[Rank::Four, Rank::Five, Rank::Six]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::King);
-        gs.draw_pile = draw;
-    }
+    app.world_mut().resource_mut::<GameState>().draw_pile = draw;
 
     run_play_selection(&mut app, vec![ace]);
 
@@ -250,16 +216,12 @@ fn human_play_defers_refill() {
     let mut app = test_app();
     enter_playing(&mut app);
     let king = spawn_card(&mut app, Suit::Hearts, Rank::King);
-    set_pile(&mut app, vec![king]);
+    set_pile(&mut app, vec![king], Some(Rank::King));
 
     let ace = spawn_card(&mut app, Suit::Spades, Rank::Ace);
     set_hand(&mut app, 0, vec![ace]);
     let draw = spawn_ranks(&mut app, &[Rank::Four, Rank::Five, Rank::Six]);
-    {
-        let mut gs = app.world_mut().resource_mut::<GameState>();
-        gs.effective_rank = Some(Rank::King);
-        gs.draw_pile = draw;
-    }
+    app.world_mut().resource_mut::<GameState>().draw_pile = draw;
 
     run_play_selection(&mut app, vec![ace]);
 

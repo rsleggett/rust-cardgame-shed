@@ -58,12 +58,21 @@ pub fn set_face_down(app: &mut App, seat: usize, cards: Vec<Entity>) {
     app.world_mut().resource_mut::<GameState>().players[seat].face_down_cards = cards;
 }
 
-/// Push entities onto `cards_in_play` (the pile). Oldest first; the last
-/// entry is the visible top card.
-pub fn set_pile(app: &mut App, cards: Vec<Entity>) {
+/// Push entities onto `cards_in_play` (the pile) and set `effective_rank`
+/// atomically. Oldest first; the last entry is the visible top card.
+///
+/// `effective_rank` is required (not derived from the cards) because the rank
+/// that the next player must beat isn't always the top card's rank — e.g. a
+/// 3 on top is transparent, so `effective_rank` reflects whatever sat below.
+/// Pass `None` for tests where the rank doesn't matter (pickup, swap, etc.).
+///
+/// Does NOT touch `seven_active` or `any_card_playable`; set those separately
+/// if a test needs them.
+pub fn set_pile(app: &mut App, cards: Vec<Entity>, effective_rank: Option<Rank>) {
     let mut gs = app.world_mut().resource_mut::<GameState>();
     gs.cards_in_play = cards;
     gs.current_card = gs.cards_in_play.last().copied();
+    gs.effective_rank = effective_rank;
 }
 
 /// Add a buff to player `seat`. Useful for testing buff-conditional paths
