@@ -1056,19 +1056,20 @@ fn play_selection(
     }
 
     // Burn check delegates to rules::is_burn for the predicate; we just need
-    // to resolve the per-seat buff flags and the pile's top ranks here. If any
-    // entity in the pile fails to resolve as a Card the burn is suppressed,
-    // matching the original defensive semantics — collecting into Option<Vec>
-    // yields None on the first failure.
+    // to resolve the per-seat buff flags and the top ≤4 pile ranks here.
+    // Same-rank streak burns cap at 4 (or 3 with Hot Hand), so we never need
+    // to look further down. If any top entity fails to resolve as a Card the
+    // burn is suppressed (defensive — should never happen in normal play).
     let hot_hand = game_state.players[playing_player].has_buff(BuffKind::HotHand);
     let wild_twos = game_state.players[playing_player].has_buff(BuffKind::WildTwos);
     let wild_kings = game_state.players[playing_player].has_buff(BuffKind::WildKings);
-    let pile_top_ranks: Option<Vec<Rank>> = game_state
-        .cards_in_play
+    let pile_len = game_state.cards_in_play.len();
+    let take = pile_len.min(4);
+    let top_ranks: Option<Vec<Rank>> = game_state.cards_in_play[pile_len - take..]
         .iter()
         .map(|&e| cards.get(e).ok().map(|c| c.rank))
         .collect();
-    let burn = pile_top_ranks
+    let burn = top_ranks
         .map(|ranks| is_burn(rank, &ranks, hot_hand, wild_twos, wild_kings))
         .unwrap_or(false);
 
