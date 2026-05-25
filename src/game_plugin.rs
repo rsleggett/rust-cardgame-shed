@@ -8,6 +8,7 @@ use crate::components::game::{
 use crate::components::card::{Card, Rank};
 use crate::rendering::card_constants::{CARD_HEIGHT, CARD_WIDTH, PLAY_PILE_X, Z_INDEX_STEP};
 use crate::rendering::card_renderer::{CardRendererPlugin, CardAnimation};
+use crate::rules::{can_play_card, is_burn};
 
 const AI_TICK_NORMAL: f32 = 1.5;
 const AI_TICK_SPECTATE: f32 = 0.3;
@@ -509,30 +510,6 @@ fn has_valid_play(game_state: &GameState, cards: &Query<&Card>, player_index: us
         }
     }
     false
-}
-
-fn can_play_card(
-    card: &Card,
-    effective_rank: Option<Rank>,
-    seven_active: bool,
-    any_card_playable: bool,
-    has_counter7: bool,
-) -> bool {
-    // 2, 3, and 10 are always playable
-    if matches!(card.rank, Rank::Two | Rank::Three | Rank::Ten) {
-        return true;
-    }
-    if any_card_playable {
-        return true;
-    }
-    if seven_active && !has_counter7 {
-        return (card.rank as u8) <= (Rank::Seven as u8);
-    }
-    if let Some(r) = effective_rank {
-        (card.rank as u8) >= (r as u8)
-    } else {
-        true
-    }
 }
 
 /// Per-player hand size. Big Hand drafted? You refill to 4.
@@ -1078,22 +1055,22 @@ fn play_selection(
         }
     }
 
-    // Burn check: Ten always burns. With Hot Hand the top-3 threshold replaces
-    // the standard top-4. Wild Twos / Wild Kings extend the burn list to extra
-    // ranks for the playing player only.
+    // Burn check delegates to rules::is_burn for the predicate; we just need
+    // to resolve the per-seat buff flags and the pile's top ranks here. If any
+    // entity in the pile fails to resolve as a Card the burn is suppressed,
+    // matching the original defensive semantics — collecting into Option<Vec>
+    // yields None on the first failure.
     let hot_hand = game_state.players[playing_player].has_buff(BuffKind::HotHand);
     let wild_twos = game_state.players[playing_player].has_buff(BuffKind::WildTwos);
     let wild_kings = game_state.players[playing_player].has_buff(BuffKind::WildKings);
-    let threshold = if hot_hand { 3 } else { 4 };
-    let pile_len = game_state.cards_in_play.len();
-    let same_top_burn = pile_len >= threshold && {
-        let top = &game_state.cards_in_play[pile_len - threshold..];
-        top.iter().all(|&e| cards.get(e).map(|c| c.rank == rank).unwrap_or(false))
-    };
-    let burn = rank == Rank::Ten
-        || same_top_burn
-        || (rank == Rank::Two && wild_twos)
-        || (rank == Rank::King && wild_kings);
+    let pile_top_ranks: Option<Vec<Rank>> = game_state
+        .cards_in_play
+        .iter()
+        .map(|&e| cards.get(e).ok().map(|c| c.rank))
+        .collect();
+    let burn = pile_top_ranks
+        .map(|ranks| is_burn(rank, &ranks, hot_hand, wild_twos, wild_kings))
+        .unwrap_or(false);
 
     if burn {
         game_state.seven_active = false;

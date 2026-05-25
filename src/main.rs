@@ -3,6 +3,7 @@ use bevy::prelude::*;
 mod ai;
 mod components;
 mod rendering;
+mod rules;
 mod game_plugin;
 
 use game_plugin::GamePlugin;
