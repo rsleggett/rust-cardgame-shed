@@ -584,6 +584,19 @@ mod tests {
     }
 
     #[test]
+    fn award_round_picks_higher_scorer_on_simultaneous_target_cross() {
+        // Both p0 and p1 start at 2 with target 3, then both cross on this
+        // round (p1 gains 2 → 4, p0 gains 1 → 3). Must pick p1 because the
+        // impl uses max_by_key on cumulative score.
+        let mut ms = MatchState::new(3, 3);
+        ms.scores[0] = 2;
+        ms.scores[1] = 2;
+        ms.award_round(&[1, 0, 2]); // p1 first → +2, p0 second → +1, p2 third → +0
+        assert_eq!(ms.scores, vec![3, 4, 0]);
+        assert_eq!(ms.match_winner, Some(1));
+    }
+
+    #[test]
     fn start_next_round_clears_scored_flag_and_bumps_round() {
         let mut ms = MatchState::new(4, 10);
         ms.award_round(&[0, 1, 2, 3]);
@@ -605,23 +618,20 @@ mod tests {
 
     #[test]
     fn generate_personas_disambiguates_duplicates() {
-        // Run enough draws that we almost certainly hit at least one duplicate
-        // in the pool of 3 personalities. Any duplicate should get a numeric
-        // suffix in pick order.
+        // 9 draws from a 3-personality pool guarantees duplicates by pigeonhole.
+        // Property: for every base name, the display names should be exactly
+        // "Base", "Base 2", "Base 3", … in occurrence order.
         let personas = MatchState::generate_personas(9);
-        let mut seen: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+        let mut groups: std::collections::HashMap<&str, Vec<&str>> = Default::default();
         for p in &personas {
-            // Display name is either bare ("Rob") or suffixed ("Rob 2").
-            let parts: Vec<&str> = p.display_name.splitn(2, ' ').collect();
-            let base = parts[0];
-            let count = seen.entry(base).or_insert(0);
-            *count += 1;
-            let expected_name = if *count == 1 {
-                base.to_string()
-            } else {
-                format!("{} {}", base, *count)
-            };
-            assert_eq!(p.display_name, expected_name);
+            let base = p.display_name.split(' ').next().unwrap();
+            groups.entry(base).or_default().push(&p.display_name);
+        }
+        for (base, names) in &groups {
+            for (i, &name) in names.iter().enumerate() {
+                let expected = if i == 0 { base.to_string() } else { format!("{} {}", base, i + 1) };
+                assert_eq!(name, expected);
+            }
         }
     }
 
@@ -672,4 +682,4 @@ mod tests {
         // Second call same round → false (already used).
         assert!(!p.try_consume(BuffKind::Mulligan));
     }
-} 
+}

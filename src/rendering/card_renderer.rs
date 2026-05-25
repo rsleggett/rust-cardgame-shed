@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use crate::components::game::{GameState, GamePhase};
 use crate::components::card_visual::update_card_visuals;
 use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT, CARD_OVERLAP, Z_INDEX_STEP, PLAY_PILE_X, HAND_FAN_STEP, HAND_FAN_ANGLE, HAND_FAN_ARC};
-use crate::game_plugin::HoveredCard;
+use crate::systems::input::HoveredCard;
 
 /// Marker for the highlight sprite shown on the play pile when the player must pick up.
 #[derive(Component)]

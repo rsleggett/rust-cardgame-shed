@@ -1,9 +1,12 @@
 use bevy::prelude::*;
 
 mod ai;
+mod audio;
 mod components;
 mod rendering;
 mod rules;
+mod systems;
+mod ui;
 mod game_plugin;
 
 use game_plugin::GamePlugin;
