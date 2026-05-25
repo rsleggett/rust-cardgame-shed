@@ -29,18 +29,38 @@ game runs silently if the file is missing (Bevy logs a one-line warning).
 ```
 src/
   main.rs                        # App entry point — 1440x900 window
-  game_plugin.rs                 # GamePlugin: systems, input, draft, restart, HUD
+  game_plugin.rs                 # GamePlugin: resource registration, system wiring, setup_game
+  audio.rs                       # BackgroundMusic, MusicMuted, setup_music, Ctrl+M toggle
+  rules.rs                       # Pure predicates: can_play_card, is_burn (+ unit tests)
   ai.rs                          # Per-personality AI strategy (Rob / Mike / Dave)
   components/
     mod.rs
     card.rs                      # Card component, Suit, Rank
     card_visual.rs               # CardBundle, spawn_card_complete, update_card_visuals
     game.rs                      # GameState + Player; MatchState; Personality;
-                                 # BuffKind, ActiveBuff; dealing logic
+                                 # BuffKind, ActiveBuff; dealing logic (+ unit tests)
   rendering/
     mod.rs
     card_renderer.rs             # CardRendererPlugin, CardAnimation, layout_cards
     card_constants.rs            # Sizes, z-step, play-pile x, hand fan params
+  systems/
+    mod.rs
+    dealing.rs                   # DealTimer, deal_cards_system, draw_first_card_system
+    input.rs                     # Mouse + keyboard: hover, click staging, double-click,
+                                 # InvalidCardClicked event, confirm_play (Enter/Escape)
+    play.rs                      # play_selection, pickup, refill, check_valid_plays,
+                                 # has_valid_play, target_hand_size
+    ai_runner.rs                 # AITimer, ai_player_system (dispatches to crate::ai)
+    swap.rs                      # SwapState, DoneSwapButton, swap input + AI heuristic
+    draft.rs                     # DraftState, DraftScreen overlay, AI draft picks
+    consumables.rs               # PeekRevealTimer, Mulligan (M) and Peek (P) handlers
+    visuals.rs                   # update_card_face_up_state (per-frame card flags)
+  ui/
+    mod.rs
+    play_button.rs               # PlayButton, click handler, style toggle
+    score_hud.rs                 # Top-right round/score widget; display-name helpers
+    pile_status.rs               # World-space "Play X or higher" text above the pile
+    game_over.rs                 # Full-screen overlay + restart_game_system
 assets/fonts/
   NotoSans-Regular.ttf           # Rank text
   NotoSansSymbols2-Regular.ttf   # Suit glyphs (♥♦♣♠)
@@ -51,7 +71,7 @@ assets/fonts/
 - **ECS via Bevy** — game logic lives in systems; data lives in components and resources.
 - **`GameState`** ([game.rs:7](src/components/game.rs#L7)) is the round-scoped resource: turn, phase, players, draw/discard piles, `cards_in_play`, `finish_order`, `spectate_mode`, `effective_rank`, `seven_active`, `any_card_playable`, `needs_to_pickup`, `selected_cards`, `pending_refill`/`refill_timer`. Reset on every round restart.
 - **`MatchState`** ([game.rs](src/components/game.rs)) is the match-scoped resource that survives round resets: `round`, `target`, `scores`, `personas` (AI lineup), `persistent_modifiers` (drafted buffs per seat), `previous_shed`, `match_winner`. Wiped only on new-match restart.
-- **`DraftState`** ([game_plugin.rs](src/game_plugin.rs)) is the transient per-round draft state: `pools` (offered buffs per seat) + `picks` (chosen buff per seat). Populated on entry to `Drafting`, cleared by `apply_picks_system`.
+- **`DraftState`** ([systems/draft.rs](src/systems/draft.rs)) is the transient per-round draft state: `pools` (offered buffs per seat) + `picks` (chosen buff per seat). Populated on entry to `Drafting`, cleared by `apply_picks_system`.
 - **Four players**: human at index 0 (bottom centre), three AIs at top-left/centre/right. Each AI has a `Personality` (Rob / Mike / Dave) randomly drawn at match start. Duplicates are disambiguated with numeric suffixes ("Dave", "Dave 2").
 - **Z-index layers** ([card_constants.rs](src/rendering/card_constants.rs)):
   - Face-down table cards: 0–2 | Face-up table cards: 100–102 | Hand: 200–202

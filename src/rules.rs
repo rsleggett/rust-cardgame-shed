@@ -38,9 +38,10 @@ pub fn can_play_card(
 /// Whether playing `rank` should burn the pile (move it to discard, same
 /// player goes again).
 ///
-/// `pile_top_ranks` is the top of the pile after the new play, ordered
-/// oldest-to-newest. Length is whatever the caller has — we just need at
-/// least `threshold` entries to check for a same-rank streak.
+/// `pile_ranks` is the pile after the new play, ordered oldest-to-newest.
+/// Only the last `threshold` entries are inspected (threshold is 4, or 3
+/// with Hot Hand); anything older is ignored, so callers may pass either
+/// the whole pile or just the top — both are correct.
 ///
 /// Burn triggers:
 ///   - any Ten
@@ -49,7 +50,7 @@ pub fn can_play_card(
 ///   - a King played by a Wild Kings holder
 pub fn is_burn(
     rank: Rank,
-    pile_top_ranks: &[Rank],
+    pile_ranks: &[Rank],
     hot_hand: bool,
     wild_twos: bool,
     wild_kings: bool,
@@ -64,11 +65,11 @@ pub fn is_burn(
         return true;
     }
     let threshold = if hot_hand { 3 } else { 4 };
-    if pile_top_ranks.len() < threshold {
+    if pile_ranks.len() < threshold {
         return false;
     }
-    let start = pile_top_ranks.len() - threshold;
-    pile_top_ranks[start..].iter().all(|&r| r == rank)
+    let start = pile_ranks.len() - threshold;
+    pile_ranks[start..].iter().all(|&r| r == rank)
 }
 
 #[cfg(test)]
