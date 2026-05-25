@@ -8,6 +8,7 @@ A Rust implementation of the card game **Shed** using the [Bevy](https://bevyeng
 
 ```bash
 ./scripts/download-fonts.sh  # one-time: fetch font assets (not tracked in git)
+./scripts/download-music.sh  # optional: prints where to drop a lo-fi OGG track
 cargo run                    # run the game
 cargo build                  # build only
 cargo check                  # fast type-check without linking
@@ -17,6 +18,11 @@ cargo clippy                 # lint
 Fonts are gitignored. `scripts/download-fonts.sh` pulls them from the
 `google/fonts` GitHub mirror into `assets/fonts/`. Re-run any time those files
 go missing — the script is idempotent (skips files that already exist).
+
+Music is also gitignored. `scripts/download-music.sh` does not bundle a track;
+it just creates `assets/music/` and prints suggested CC0 sources. Drop a
+lo-fi OGG at `assets/music/lofi_loop.ogg` to enable background music — the
+game runs silently if the file is missing (Bevy logs a one-line warning).
 
 ## Source Structure
 
@@ -57,10 +63,11 @@ assets/fonts/
 ## Game Phases
 
 ```
-Dealing → Drafting → Playing → GameOver → (key press) → Dealing → …
+Dealing → Swap → Drafting → Playing → GameOver → (key press) → Dealing → …
 ```
 
 - **Dealing** — deals 9 cards per player at `DEAL_INTERVAL = 0.15s` apart.
+- **Swap** — standard Shithead pre-play. Human clicks a hand card (highlights green) then clicks a face-up card to swap; repeat as desired; press the "Done Swapping" button to confirm. AIs greedily promote any hand card whose rank exceeds a face-up rank.
 - **Drafting** — each seat picks one buff. Human via overlay click, AIs auto-pick randomly. Pool size 3 normally, 5 for the previous round's Shed.
 - **Playing** — normal play; ends when one player remains (the "Shed").
 - **GameOver** — full-screen overlay with finish-order ranking, +points this round, cumulative scores, and a CTA to either start the next round or a new match.
@@ -72,6 +79,8 @@ Dealing → Drafting → Playing → GameOver → (key press) → Dealing → �
 - While draw pile not empty → play from hand only; refill hand to 3 (or 4 with Big Hand) after playing.
 - When draw pile empty: hand → face-up → face-down (strict order).
 - Can't play → must pick up the entire `cards_in_play` stack into hand.
+- **Face-down phase**: click is a blind flip — the card plays immediately without validation. If it bricks, the player picks up the pile (including that revealed card).
+- **Face-up endgame**: any face-up may be staged; an invalid confirmation animates the staged cards onto the pile then triggers pickup, so they travel back to the hand with the rest of the stack.
 
 **Special cards**
 - **2** — resets the pile; any card valid next (`any_card_playable = true`).
@@ -133,13 +142,17 @@ Pool generation excludes buffs the player already has. Consumables refresh each 
 | Input | Action |
 |---|---|
 | Click card | Stage / deselect (only on human's turn) |
+| Double-click card | Play that card immediately, bypassing staging |
 | Enter | Confirm staged play |
 | Escape | Clear staged selection |
 | Play Cards button | Confirm staged play |
 | Click play pile / Space | Pick up cards (when prompt is active) |
+| Click hand → click face-up (during Swap) | Swap those two cards |
+| Done Swapping button | End Swap phase |
 | Click buff row (during draft) | Pick that buff for the round |
 | M | Use Mulligan (if drafted, once per round) |
 | P | Use Peek (if drafted, once per round) |
+| Ctrl+M | Toggle background-music mute |
 | Any key on Game Over | Continue to next round / new match |
 
 ## AI Behaviour
@@ -150,7 +163,8 @@ Pool generation excludes buffs the player already has. Consumables refresh each 
   - **Mike** (cunning, hoards): always single-card; treats 7 as a reserved weapon; saves 2 / 10 for emergencies.
   - **Dave** (chaotic): random rank choice, 50/50 bundle-or-single, will happily waste specials by bundling them.
 - All AIs route through `play_selection` (same path as human plays). Human refills are deferred via `pending_refill`; AI hands refill inline.
-- Face-down play is always a single blind card regardless of personality.
+- Face-down play is always a single blind card regardless of personality, for AI and human alike — `ai_player_system` skips the playability filter in face-down mode and `play_selection` routes a brick to pickup.
+- During the Swap phase, each AI greedily promotes any hand card whose rank exceeds a face-up card's rank, picking the biggest gain each iteration until no improvement remains. Personality-aware swap preferences are a follow-up.
 
 ## Known Gaps / Future Work
 

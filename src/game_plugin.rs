@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use bevy::audio::{PlaybackSettings, Volume};
 use bevy::prelude::*;
 use crate::components::game::{
     ActiveBuff, BuffKind, GamePhase, GameState, MatchState, Personality,
@@ -35,6 +36,24 @@ struct PileStatusText;
 
 #[derive(Component)]
 struct PlayButton;
+
+/// Bottom-centre button visible only during the Swap phase. Click → human is
+/// done swapping. Shares the play button's slot via mutually exclusive
+/// visibility.
+#[derive(Component)]
+struct DoneSwapButton;
+
+/// Marker on the single looping background-music entity. Used by the mute
+/// toggle to find the audio sink.
+#[derive(Component)]
+struct BackgroundMusic;
+
+/// Current mute state for the background music. Persists across mute toggles
+/// so we restore the player's preference after a track restarts.
+#[derive(Resource, Default)]
+struct MusicMuted(bool);
+
+const MUSIC_VOLUME: f32 = 0.35;
 
 /// Marker on the always-visible score widget (top-right of the screen).
 #[derive(Component)]
@@ -91,6 +110,30 @@ struct InvalidFeedbackTimer(f32);
 #[derive(Resource, Default)]
 pub struct HoveredCard(pub Option<Entity>);
 
+/// Tracks the most recently clicked card and how long ago. A second click on
+/// the same card within `DOUBLE_CLICK_WINDOW` skips staging and plays it
+/// directly. Cleared once the window lapses to avoid stale match-ups.
+#[derive(Resource, Default)]
+struct LastClick {
+    entity: Option<Entity>,
+    age: f32,
+}
+
+const DOUBLE_CLICK_WINDOW: f32 = 0.3;
+
+/// Transient per-round state for the Swap phase. Reset on exit so the next
+/// round begins with a clean slate.
+#[derive(Resource, Default)]
+struct SwapState {
+    /// The human's currently-staged hand card waiting for a face-up partner.
+    human_selected_hand: Option<Entity>,
+    /// Which AIs have completed their swap heuristic this round. Indexed by
+    /// seat - 1 (human is seat 0).
+    ai_done: [bool; PLAYER_COUNT - 1],
+    /// Set when the human clicks the Done Swapping button.
+    human_done: bool,
+}
+
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -99,16 +142,20 @@ impl Plugin for GamePlugin {
             .insert_resource(GameState::new())
             .insert_resource(MatchState::new(PLAYER_COUNT, MATCH_TARGET))
             .insert_resource(DraftState::default())
+            .insert_resource(SwapState::default())
             .insert_resource(PeekRevealTimer::default())
             .insert_resource(DealTimer(Timer::from_seconds(DEAL_INTERVAL, TimerMode::Repeating)))
             .insert_resource(AITimer(Timer::from_seconds(AI_TICK_NORMAL, TimerMode::Repeating)))
             .insert_resource(HoveredCard::default())
+            .insert_resource(LastClick::default())
             .insert_resource(InvalidFeedbackTimer::default())
+            .insert_resource(MusicMuted::default())
             .add_event::<InvalidCardClicked>()
-            .add_systems(Startup, setup_game)
+            .add_systems(Startup, (setup_game, setup_music))
             .add_systems(Update, (
                 update_game_state,
                 update_hovered_card,
+                tick_last_click,
                 handle_mouse_input,
                 handle_invalid_card_event,
                 confirm_play_system,
@@ -136,6 +183,15 @@ impl Plugin for GamePlugin {
                 handle_mulligan_key,
                 handle_peek_key,
                 tick_peek_timer,
+            ))
+            .add_systems(Update, (
+                // Swap phase systems — separate block since the first two are full.
+                handle_swap_input,
+                handle_done_swap_button,
+                ai_swap_system,
+                advance_swap_phase,
+                update_swap_button_visibility,
+                toggle_music_mute,
             ));
     }
 }
@@ -223,9 +279,66 @@ fn setup_game(
         ));
     });
 
+    // "Done Swapping" button — shares the play button's slot. Hidden by
+    // default; update_swap_button_visibility toggles based on phase.
+    commands.spawn((
+        DoneSwapButton,
+        ButtonBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(12.0),
+                left: Val::Percent(50.0),
+                margin: UiRect::left(Val::Px(-72.0)), // centre the 144px button
+                width: Val::Px(144.0),
+                height: Val::Px(40.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                display: Display::None,
+                ..default()
+            },
+            background_color: Color::srgb(0.15, 0.55, 0.15).into(),
+            ..default()
+        },
+    )).with_children(|parent| {
+        parent.spawn(TextBundle::from_section(
+            "Done Swapping",
+            TextStyle { font: font.clone(), font_size: 16.0, color: Color::WHITE },
+        ));
+    });
+
     spawn_score_hud(&mut commands, font);
 
     info!("Game setup complete! Ready to deal cards.");
+}
+
+/// Spawns the background music sink on startup. The OGG asset is optional —
+/// if `assets/music/lofi_loop.ogg` is absent Bevy logs an asset-load warning
+/// and the game runs silently. See scripts/download-music.sh.
+fn setup_music(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn((
+        BackgroundMusic,
+        AudioBundle {
+            source: asset_server.load("music/lofi_loop.ogg"),
+            settings: PlaybackSettings::LOOP.with_volume(Volume::new(MUSIC_VOLUME)),
+        },
+    ));
+}
+
+/// Ctrl+M toggles background-music mute. Bound under a modifier so the bare
+/// M key continues to consume Mulligan during play without ambiguity.
+fn toggle_music_mute(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut muted: ResMut<MusicMuted>,
+    sinks: Query<&AudioSink, With<BackgroundMusic>>,
+) {
+    let ctrl_held = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    if !ctrl_held || !keys.just_pressed(KeyCode::KeyM) {
+        return;
+    }
+    muted.0 = !muted.0;
+    if let Ok(sink) = sinks.get_single() {
+        sink.set_volume(if muted.0 { 0.0 } else { MUSIC_VOLUME });
+    }
 }
 
 /// Spawns the top-right round/score widget. Persists across restarts; its text
@@ -379,19 +492,18 @@ fn has_valid_play(game_state: &GameState, cards: &Query<&Card>, player_index: us
         .unwrap_or(false);
 
     if let Some(player) = game_state.players.get(player_index) {
-        let sources: &[&[Entity]] = if draw_pile_not_empty || !player.hand.is_empty() {
-            &[&player.hand]
+        let source: &[Entity] = if draw_pile_not_empty || !player.hand.is_empty() {
+            &player.hand
         } else if !player.face_up_cards.is_empty() {
-            &[&player.face_up_cards]
+            &player.face_up_cards
         } else {
-            &[&player.face_down_cards]
+            // Face-down phase: player must blind-flip; can't preempt with pickup.
+            return !player.face_down_cards.is_empty();
         };
-        for &source in sources {
-            for &card_entity in source {
-                if let Ok(card) = cards.get(card_entity) {
-                    if can_play_card(card, effective_rank, sa, acp, has_counter7) {
-                        return true;
-                    }
+        for &card_entity in source {
+            if let Ok(card) = cards.get(card_entity) {
+                if can_play_card(card, effective_rank, sa, acp, has_counter7) {
+                    return true;
                 }
             }
         }
@@ -523,7 +635,187 @@ fn update_hovered_card(
     hovered.0 = found;
 }
 
+fn tick_last_click(mut last_click: ResMut<LastClick>, time: Res<Time>) {
+    if last_click.entity.is_some() {
+        last_click.age += time.delta_seconds();
+        if last_click.age > DOUBLE_CLICK_WINDOW * 2.0 {
+            last_click.entity = None;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_swap_input(
+    windows: Query<&Window>,
+    mut game_state: ResMut<GameState>,
+    mut swap_state: ResMut<SwapState>,
+    transforms: Query<&GlobalTransform>,
+    camera_q: Query<(&Camera, &GlobalTransform)>,
+    mouse_button_input: Res<ButtonInput<MouseButton>>,
+    button_q: Query<&Interaction, With<DoneSwapButton>>,
+) {
+    if game_state.phase != GamePhase::Swap || swap_state.human_done {
+        return;
+    }
+    if !mouse_button_input.just_pressed(MouseButton::Left) {
+        return;
+    }
+    // The Done button overlaps the hand fan area; drop swap input when the
+    // cursor is over the button so a Done click can't also swap a card.
+    if button_q
+        .iter()
+        .any(|i| matches!(i, Interaction::Pressed | Interaction::Hovered))
+    {
+        return;
+    }
+
+    let (camera, camera_transform) = camera_q.single();
+    let window = windows.single();
+    let Some(cursor_pos) = window.cursor_position() else { return; };
+    let Some(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else { return; };
+
+    let hand: Vec<Entity> = game_state.players[0].hand.clone();
+    let face_up: Vec<Entity> = game_state.players[0].face_up_cards.clone();
+
+    let hit_in = |source: &[Entity]| -> Option<Entity> {
+        let mut found = None;
+        for &e in source {
+            if let Ok(t) = transforms.get(e) {
+                let p = t.translation().truncate();
+                if world_pos.x >= p.x - CARD_WIDTH / 2.0
+                    && world_pos.x <= p.x + CARD_WIDTH / 2.0
+                    && world_pos.y >= p.y - CARD_HEIGHT / 2.0
+                    && world_pos.y <= p.y + CARD_HEIGHT / 2.0
+                {
+                    found = Some(e);
+                }
+            }
+        }
+        found
+    };
+
+    if let Some(hand_hit) = hit_in(&hand) {
+        if swap_state.human_selected_hand == Some(hand_hit) {
+            swap_state.human_selected_hand = None;
+            game_state.selected_cards.retain(|&e| e != hand_hit);
+        } else {
+            game_state.selected_cards.clear();
+            swap_state.human_selected_hand = Some(hand_hit);
+            game_state.selected_cards.push(hand_hit);
+        }
+        return;
+    }
+
+    if let Some(fu_hit) = hit_in(&face_up) {
+        let Some(hand_card) = swap_state.human_selected_hand.take() else { return; };
+        if let Some(player) = game_state.players.get_mut(0) {
+            if let (Some(h_pos), Some(f_pos)) = (
+                player.hand.iter().position(|&e| e == hand_card),
+                player.face_up_cards.iter().position(|&e| e == fu_hit),
+            ) {
+                player.hand[h_pos] = fu_hit;
+                player.face_up_cards[f_pos] = hand_card;
+            }
+        }
+        game_state.selected_cards.clear();
+    }
+}
+
+fn handle_done_swap_button(
+    game_state: Res<GameState>,
+    mut swap_state: ResMut<SwapState>,
+    interaction_q: Query<&Interaction, (Changed<Interaction>, With<DoneSwapButton>)>,
+) {
+    if game_state.phase != GamePhase::Swap {
+        return;
+    }
+    for interaction in &interaction_q {
+        if *interaction == Interaction::Pressed {
+            swap_state.human_done = true;
+        }
+    }
+}
+
+/// Each AI greedily swaps any hand card whose rank exceeds a face-up card's
+/// rank, picking the biggest gain each iteration until no improvement remains.
+/// Runs once per round entry into Swap; the `ai_done` flags make subsequent
+/// frames no-ops.
+fn ai_swap_system(
+    mut game_state: ResMut<GameState>,
+    mut swap_state: ResMut<SwapState>,
+    cards: Query<&Card>,
+) {
+    if game_state.phase != GamePhase::Swap {
+        return;
+    }
+    let n_players = game_state.players.len();
+    for ai_idx in 1..n_players {
+        let slot = ai_idx - 1;
+        if swap_state.ai_done.get(slot).copied().unwrap_or(true) {
+            continue;
+        }
+        loop {
+            let mut best: Option<(usize, usize, u8)> = None; // (hand_idx, fu_idx, gain)
+            {
+                let player = &game_state.players[ai_idx];
+                for (h_idx, &h_e) in player.hand.iter().enumerate() {
+                    let Ok(h_card) = cards.get(h_e) else { continue; };
+                    for (f_idx, &f_e) in player.face_up_cards.iter().enumerate() {
+                        let Ok(f_card) = cards.get(f_e) else { continue; };
+                        let hr = h_card.rank as u8;
+                        let fr = f_card.rank as u8;
+                        if hr > fr {
+                            let gain = hr - fr;
+                            if best.map_or(true, |(_, _, g)| gain > g) {
+                                best = Some((h_idx, f_idx, gain));
+                            }
+                        }
+                    }
+                }
+            }
+            let Some((h_idx, f_idx, _)) = best else { break; };
+            let player = &mut game_state.players[ai_idx];
+            let h_e = player.hand[h_idx];
+            let f_e = player.face_up_cards[f_idx];
+            player.hand[h_idx] = f_e;
+            player.face_up_cards[f_idx] = h_e;
+        }
+        swap_state.ai_done[slot] = true;
+    }
+}
+
+fn advance_swap_phase(
+    mut game_state: ResMut<GameState>,
+    mut swap_state: ResMut<SwapState>,
+) {
+    if game_state.phase != GamePhase::Swap {
+        return;
+    }
+    let all_ai_done = swap_state.ai_done.iter().all(|&d| d);
+    if swap_state.human_done && all_ai_done {
+        game_state.phase = GamePhase::Drafting;
+        game_state.selected_cards.clear();
+        *swap_state = SwapState::default();
+    }
+}
+
+fn update_swap_button_visibility(
+    game_state: Res<GameState>,
+    mut play_q: Query<&mut Style, (With<PlayButton>, Without<DoneSwapButton>)>,
+    mut swap_q: Query<&mut Style, (With<DoneSwapButton>, Without<PlayButton>)>,
+) {
+    let in_swap = game_state.phase == GamePhase::Swap;
+    for mut style in play_q.iter_mut() {
+        style.display = if in_swap { Display::None } else { Display::Flex };
+    }
+    for mut style in swap_q.iter_mut() {
+        style.display = if in_swap { Display::Flex } else { Display::None };
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn handle_mouse_input(
+    mut commands: Commands,
     windows: Query<&Window>,
     mut game_state: ResMut<GameState>,
     cards: Query<&Card>,
@@ -531,6 +823,7 @@ fn handle_mouse_input(
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
     mut invalid_ev: EventWriter<InvalidCardClicked>,
+    mut last_click: ResMut<LastClick>,
 ) {
     if game_state.phase != GamePhase::Playing {
         return;
@@ -545,7 +838,9 @@ fn handle_mouse_input(
     let Some(cursor_position) = window.cursor_position() else { return; };
     let Some(world_position) = camera.viewport_to_world_2d(camera_transform, cursor_position) else { return; };
 
-    // Click play pile to pick up when required
+    // Click play pile to pick up when required. While pickup is pending, no
+    // other card interaction is allowed — the player must pick up before
+    // flipping a face-down or staging anything else.
     if game_state.needs_to_pickup && game_state.current_player == 0 {
         let in_pile = world_position.x >= PLAY_PILE_X - CARD_WIDTH / 2.0 - 12.0
             && world_position.x <= PLAY_PILE_X + CARD_WIDTH / 2.0 + 12.0
@@ -556,8 +851,8 @@ fn handle_mouse_input(
             pickup_cards_in_play(&mut game_state, current_player_index);
             game_state.needs_to_pickup = false;
             game_state.advance_to_next_active();
-            return;
         }
+        return;
     }
 
     // Only stage cards on the human player's turn
@@ -569,13 +864,16 @@ fn handle_mouse_input(
     let hand_not_empty = !player.hand.is_empty();
     let face_up_not_empty = !player.face_up_cards.is_empty();
 
+    let playing_from_face_down = !draw_pile_not_empty && !hand_not_empty && !face_up_not_empty;
+    let playing_from_face_up = !draw_pile_not_empty && !hand_not_empty && face_up_not_empty;
+
     let mut cards_to_check: Vec<Entity> = Vec::new();
-    if draw_pile_not_empty || hand_not_empty {
-        cards_to_check.extend(player.hand.iter().copied());
-    } else if face_up_not_empty {
+    if playing_from_face_down {
+        cards_to_check.extend(player.face_down_cards.iter().copied());
+    } else if playing_from_face_up {
         cards_to_check.extend(player.face_up_cards.iter().copied());
     } else {
-        cards_to_check.extend(player.face_down_cards.iter().copied());
+        cards_to_check.extend(player.hand.iter().copied());
     }
 
     // Find the topmost card under the cursor (same strategy as update_hovered_card:
@@ -594,37 +892,70 @@ fn handle_mouse_input(
         }
     }
 
-    if let Some(card_entity) = hit_entity {
-        if let Ok(card) = cards.get(card_entity) {
-            let has_counter7 = game_state.players[0].has_buff(BuffKind::Counter7);
-            if !can_play_card(
-                card,
-                game_state.effective_rank,
-                game_state.seven_active,
-                game_state.any_card_playable,
-                has_counter7,
-            ) {
-                // Give visual feedback that this card can't be played
-                invalid_ev.send(InvalidCardClicked(card_entity));
-                return;
+    let Some(card_entity) = hit_entity else { return; };
+
+    // Face-down: blind immediate play. Validity is resolved by play_selection,
+    // which routes an invalid play to a pickup instead of flashing red — the
+    // player can't know what the card is before flipping it.
+    if playing_from_face_down {
+        play_selection(&mut commands, &mut game_state, &cards, &transforms, &[card_entity]);
+        // Don't seed last_click — face-down already plays on a single click.
+        last_click.entity = None;
+        return;
+    }
+
+    let Ok(card) = cards.get(card_entity) else { return; };
+
+    // Face-up endgame: any face-up may be staged. An invalid attempt at confirm
+    // time pushes the staged cards onto the pile and triggers pickup, matching
+    // physical Shed rules (you commit to a face-up; if it bricks, you eat it
+    // along with the pile).
+    if !playing_from_face_up {
+        let has_counter7 = game_state.players[0].has_buff(BuffKind::Counter7);
+        if !can_play_card(
+            card,
+            game_state.effective_rank,
+            game_state.seven_active,
+            game_state.any_card_playable,
+            has_counter7,
+        ) {
+            invalid_ev.send(InvalidCardClicked(card_entity));
+            // An invalid click still resets the double-click tracker so the
+            // next click on a different card starts a fresh window.
+            last_click.entity = None;
+            return;
+        }
+    }
+
+    // Double-click on the same card within the window plays it directly,
+    // bypassing the staging step. Works for hand plays (re-validated above)
+    // and face-up endgame plays (play_selection handles invalid via pickup).
+    let is_double_click =
+        last_click.entity == Some(card_entity) && last_click.age < DOUBLE_CLICK_WINDOW;
+    if is_double_click {
+        game_state.selected_cards.clear();
+        play_selection(&mut commands, &mut game_state, &cards, &transforms, &[card_entity]);
+        last_click.entity = None;
+        return;
+    }
+    last_click.entity = Some(card_entity);
+    last_click.age = 0.0;
+
+    let card_rank = card.rank;
+    if game_state.selected_cards.contains(&card_entity) {
+        // Deselect
+        game_state.selected_cards.retain(|&e| e != card_entity);
+    } else {
+        let sel_rank = game_state.selected_cards.first()
+            .and_then(|&e| cards.get(e).ok())
+            .map(|c| c.rank);
+        if sel_rank.is_none() || sel_rank == Some(card_rank) {
+            if game_state.selected_cards.len() < 4 {
+                game_state.selected_cards.push(card_entity);
             }
-            let card_rank = card.rank;
-            if game_state.selected_cards.contains(&card_entity) {
-                // Deselect
-                game_state.selected_cards.retain(|&e| e != card_entity);
-            } else {
-                let sel_rank = game_state.selected_cards.first()
-                    .and_then(|&e| cards.get(e).ok())
-                    .map(|c| c.rank);
-                if sel_rank.is_none() || sel_rank == Some(card_rank) {
-                    if game_state.selected_cards.len() < 4 {
-                        game_state.selected_cards.push(card_entity);
-                    }
-                } else {
-                    // Different rank — start fresh selection
-                    game_state.selected_cards = vec![card_entity];
-                }
-            }
+        } else {
+            // Different rank — start fresh selection
+            game_state.selected_cards = vec![card_entity];
         }
     }
 }
@@ -665,6 +996,12 @@ fn confirm_play_system(
 }
 
 /// Plays all selected cards at once. Handles 4-of-a-kind burn and all rank effects.
+///
+/// May be invoked with a card that turns out to be illegal in two cases:
+/// blind face-down flips, and face-up endgame plays where the click handler
+/// relaxes validation. Both route an invalid attempt to pickup rather than
+/// flashing red — the cards still ride the animation onto the pile so they
+/// travel back to the player's hand with the rest of the stack.
 fn play_selection(
     commands: &mut Commands,
     game_state: &mut GameState,
@@ -702,6 +1039,27 @@ fn play_selection(
                 player.face_down_cards.remove(pos);
             }
         }
+    }
+
+    // Validate against the pile state captured before this play. If the play
+    // is illegal (blind face-down brick, or staged face-up that bricks), the
+    // cards remain on the pile and the player picks the stack up. Skip refill,
+    // burn, rank effects, and turn advance — the pickup flow takes over.
+    let has_counter7 = game_state.players[playing_player].has_buff(BuffKind::Counter7);
+    let first_card_valid = cards.get(selection[0]).map(|c| {
+        can_play_card(
+            c,
+            game_state.effective_rank,
+            game_state.seven_active,
+            game_state.any_card_playable,
+            has_counter7,
+        )
+    }).unwrap_or(false);
+
+    if !first_card_valid {
+        game_state.needs_to_pickup = true;
+        info!("Player {} bricked the play — pickup pending", playing_player);
+        return;
     }
 
     // Human refill is deferred so the new card animates in after the played
@@ -859,17 +1217,23 @@ fn ai_player_system(
             (player.face_down_cards.clone(), true)
         };
 
-    // Filter to legal plays; personality logic chooses among these.
+    // Filter to legal plays; personality logic chooses among these. Face-down
+    // candidates aren't filtered — the AI flips blind too, and play_selection
+    // routes a brick to pickup.
     let has_counter7 = game_state.players[current_idx].has_buff(BuffKind::Counter7);
-    let candidates: Vec<Entity> = source
-        .into_iter()
-        .filter(|e| {
-            cards
-                .get(*e)
-                .map(|c| can_play_card(c, effective_rank, sa, acp, has_counter7))
-                .unwrap_or(false)
-        })
-        .collect();
+    let candidates: Vec<Entity> = if from_face_down {
+        source
+    } else {
+        source
+            .into_iter()
+            .filter(|e| {
+                cards
+                    .get(*e)
+                    .map(|c| can_play_card(c, effective_rank, sa, acp, has_counter7))
+                    .unwrap_or(false)
+            })
+            .collect()
+    };
 
     let personality = game_state.players[current_idx].personality;
     let selection = crate::ai::choose_play(personality, &candidates, &cards, from_face_down);
@@ -1514,6 +1878,7 @@ fn restart_game_system(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
     mut match_state: ResMut<MatchState>,
+    mut swap_state: ResMut<SwapState>,
     keyboard: Res<ButtonInput<KeyCode>>,
     card_q: Query<Entity, With<Card>>,
     screen_q: Query<Entity, With<GameOverScreen>>,
@@ -1522,6 +1887,8 @@ fn restart_game_system(
 ) {
     if game_state.phase != GamePhase::GameOver { return; }
     if keyboard.get_just_pressed().next().is_none() { return; }
+
+    *swap_state = SwapState::default();
 
     let match_was_over = match_state.is_match_over();
     // The previous round's Shed deals first next round (Shed punishment). Captured

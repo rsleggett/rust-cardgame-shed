@@ -65,6 +65,10 @@ impl Player {
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum GamePhase {
     Dealing,
+    /// Standard Shed pre-play: each player may swap any hand cards with their
+    /// face-up cards. Ends when the human presses Done and the AI heuristics
+    /// have finished.
+    Swap,
     /// Each player picks one buff for the round before play starts.
     Drafting,
     Playing,
@@ -447,10 +451,9 @@ impl GameState {
     pub fn deal_next_card(&mut self, commands: &mut Commands, cards: &Query<&Card>) -> bool {
         if self.cards_to_deal.is_empty() {
             self.dealing_in_progress = false;
-            // Each round routes through Drafting before play begins. The
-            // draft systems will transition to Playing once everyone has
-            // picked a buff.
-            self.phase = GamePhase::Drafting;
+            // Standard Shed: swap → drafting → playing. The swap systems hand
+            // off to Drafting once both the human and AI heuristics are done.
+            self.phase = GamePhase::Swap;
             return false;
         }
         
