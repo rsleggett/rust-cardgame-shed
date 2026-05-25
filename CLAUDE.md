@@ -29,6 +29,7 @@ game runs silently if the file is missing (Bevy logs a one-line warning).
 ```
 src/
   main.rs                        # App entry point — 1440x900 window
+  lib.rs                         # Re-exports modules so tests/ can drive them
   game_plugin.rs                 # GamePlugin: resource registration, system wiring, setup_game
   audio.rs                       # BackgroundMusic, MusicMuted, setup_music, Ctrl+M toggle
   rules.rs                       # Pure predicates: can_play_card, is_burn (+ unit tests)
@@ -61,6 +62,13 @@ src/
     score_hud.rs                 # Top-right round/score widget; display-name helpers
     pile_status.rs               # World-space "Play X or higher" text above the pile
     game_over.rs                 # Full-screen overlay + restart_game_system
+tests/
+  common/mod.rs                  # App fixtures + helpers shared across integration tests
+  play_selection.rs              # Burn paths, rank effects, invalid → pickup
+  pickup.rs                      # Full / half-pickup, empty pile, staged clear
+  swap_heuristic.rs              # ai_swap_system greedy promotion + idempotency
+  phase_transitions.rs           # advance_swap_phase + check_valid_plays_system
+  has_valid_play.rs              # Source-priority predicate + face-down phase
 assets/fonts/
   NotoSans-Regular.ttf           # Rank text
   NotoSansSymbols2-Regular.ttf   # Suit glyphs (♥♦♣♠)
@@ -194,7 +202,7 @@ Pool generation excludes buffs the player already has. Consumables refresh each 
 - **AI doesn't display its picks** during draft — the overlay only shows the human's options.
 - **Big Hand visual gap** — AI hands rendering only allocates space for 3 cards; with Big Hand the 4th may overlap a sibling.
 - **"Any key on Game Over"** is generous — M and P will also dismiss the overlay between rounds.
-- **No automated tests yet**. The pure parts (`can_play_card`, burn detection, `MatchState::score_for_position`, `MatchState::award_round`) would be straightforward to unit-test.
+- **Test coverage**: 28 inline unit tests in `src/rules.rs` and `src/components/game.rs` (pure logic), plus 33 integration tests in `tests/` driving real Bevy `App`s against `play_selection`, `pickup_cards_in_play`, `ai_swap_system`, `advance_swap_phase`, `check_valid_plays_system`, and `has_valid_play`. Helpers in `tests/common/mod.rs`. Total: 61 tests, run via `cargo test`. Deferred: integration tests for `ai_player_system` / `ai_draft_system` (need a seedable RNG resource to be deterministic) and a full-round end-to-end test.
 - **Architecture**: `GameState` still mixes game logic with entity references; no event-based system communication yet (most state transitions still happen via direct resource mutation in input/AI/draft systems).
 - Suit symbols rely on a non-default font asset (`NotoSansSymbols2-Regular.ttf` — fetched by `scripts/download-fonts.sh`).
 - `NotoSans-Regular.ttf` from the script is actually the *variable* `NotoSans[wdth,wght].ttf` renamed; google/fonts doesn't ship the static Regular. Bevy renders the default axis fine, but swap in a static TTF if rendering ever looks off.

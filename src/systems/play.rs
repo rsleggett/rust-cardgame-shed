@@ -9,7 +9,7 @@ use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X, Z_INDEX_STEP};
 use crate::rendering::card_renderer::CardAnimation;
 use crate::rules::{can_play_card, is_burn};
 
-pub(crate) fn has_valid_play(
+pub fn has_valid_play(
     game_state: &GameState,
     cards: &Query<&Card>,
     player_index: usize,
@@ -49,7 +49,7 @@ pub(crate) fn target_hand_size(player: &Player) -> usize {
     if player.has_buff(BuffKind::BigHand) { 4 } else { 3 }
 }
 
-pub(crate) fn pickup_cards_in_play(game_state: &mut GameState, player_index: usize) {
+pub fn pickup_cards_in_play(game_state: &mut GameState, player_index: usize) {
     let half_pickup = game_state
         .players
         .get(player_index)
@@ -97,7 +97,7 @@ pub(crate) fn pickup_cards_in_play(game_state: &mut GameState, player_index: usi
 /// relaxes validation. Both route an invalid attempt to pickup rather than
 /// flashing red — the cards still ride the animation onto the pile so they
 /// travel back to the player's hand with the rest of the stack.
-pub(crate) fn play_selection(
+pub fn play_selection(
     commands: &mut Commands,
     game_state: &mut GameState,
     cards: &Query<&Card>,
@@ -230,7 +230,7 @@ pub(crate) fn play_selection(
     game_state.advance_to_next_active();
 }
 
-pub(crate) fn check_valid_plays_system(
+pub fn check_valid_plays_system(
     mut game_state: ResMut<GameState>,
     cards: Query<&Card>,
 ) {
