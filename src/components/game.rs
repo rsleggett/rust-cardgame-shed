@@ -512,8 +512,164 @@ impl GameState {
                 ..*card
             });
         }
-        
+
         true
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── MatchState::score_for_position ────────────────────────────────────
+
+    #[test]
+    fn score_for_position_four_player() {
+        assert_eq!(MatchState::score_for_position(0, 4), 3); // 1st
+        assert_eq!(MatchState::score_for_position(1, 4), 2);
+        assert_eq!(MatchState::score_for_position(2, 4), 1);
+        assert_eq!(MatchState::score_for_position(3, 4), 0); // Shed
+    }
+
+    #[test]
+    fn score_for_position_three_player() {
+        assert_eq!(MatchState::score_for_position(0, 3), 2);
+        assert_eq!(MatchState::score_for_position(1, 3), 1);
+        assert_eq!(MatchState::score_for_position(2, 3), 0);
+    }
+
+    #[test]
+    fn score_for_position_out_of_range_is_zero() {
+        assert_eq!(MatchState::score_for_position(5, 4), 0);
+    }
+
+    // ── MatchState::award_round ───────────────────────────────────────────
+
+    #[test]
+    fn award_round_assigns_points_and_marks_previous_shed() {
+        let mut ms = MatchState::new(4, 10);
+        // Finish order: player 0 first, 2, 1, 3 last (Shed)
+        assert!(ms.award_round(&[0, 2, 1, 3]));
+        assert_eq!(ms.scores, vec![3, 1, 2, 0]);
+        assert_eq!(ms.previous_shed, Some(3));
+        assert!(ms.current_round_scored);
+        assert!(ms.match_winner.is_none()); // target 10 not yet reached
+    }
+
+    #[test]
+    fn award_round_is_idempotent_within_a_round() {
+        let mut ms = MatchState::new(4, 10);
+        assert!(ms.award_round(&[0, 1, 2, 3]));
+        // Second call same round: no-op, scores unchanged.
+        assert!(!ms.award_round(&[0, 1, 2, 3]));
+        assert_eq!(ms.scores, vec![3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn award_round_no_op_on_empty_finish_order() {
+        let mut ms = MatchState::new(4, 10);
+        assert!(!ms.award_round(&[]));
+        assert_eq!(ms.scores, vec![0, 0, 0, 0]);
+        assert!(!ms.current_round_scored);
+    }
+
+    #[test]
+    fn award_round_sets_match_winner_when_target_reached() {
+        // Low target so a single round crosses it.
+        let mut ms = MatchState::new(4, 3);
+        ms.award_round(&[0, 1, 2, 3]); // player 0 gets 3 points
+        assert_eq!(ms.match_winner, Some(0));
+        assert!(ms.is_match_over());
+    }
+
+    #[test]
+    fn start_next_round_clears_scored_flag_and_bumps_round() {
+        let mut ms = MatchState::new(4, 10);
+        ms.award_round(&[0, 1, 2, 3]);
+        let prev_round = ms.round;
+        ms.start_next_round();
+        assert_eq!(ms.round, prev_round + 1);
+        assert!(!ms.current_round_scored);
+        // Scores persist across rounds.
+        assert_eq!(ms.scores, vec![3, 2, 1, 0]);
+    }
+
+    // ── MatchState::generate_personas ─────────────────────────────────────
+
+    #[test]
+    fn generate_personas_yields_requested_count() {
+        let personas = MatchState::generate_personas(3);
+        assert_eq!(personas.len(), 3);
+    }
+
+    #[test]
+    fn generate_personas_disambiguates_duplicates() {
+        // Run enough draws that we almost certainly hit at least one duplicate
+        // in the pool of 3 personalities. Any duplicate should get a numeric
+        // suffix in pick order.
+        let personas = MatchState::generate_personas(9);
+        let mut seen: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+        for p in &personas {
+            // Display name is either bare ("Rob") or suffixed ("Rob 2").
+            let parts: Vec<&str> = p.display_name.splitn(2, ' ').collect();
+            let base = parts[0];
+            let count = seen.entry(base).or_insert(0);
+            *count += 1;
+            let expected_name = if *count == 1 {
+                base.to_string()
+            } else {
+                format!("{} {}", base, *count)
+            };
+            assert_eq!(p.display_name, expected_name);
+        }
+    }
+
+    // ── Player::has_buff / try_consume ────────────────────────────────────
+
+    fn make_player_with(buffs: Vec<ActiveBuff>) -> Player {
+        Player {
+            id: 0,
+            name: "test".to_string(),
+            face_up_cards: Vec::new(),
+            face_down_cards: Vec::new(),
+            hand: Vec::new(),
+            eliminated: false,
+            personality: Personality::Rob,
+            modifiers: buffs,
+        }
+    }
+
+    #[test]
+    fn has_buff_returns_false_when_missing() {
+        let p = make_player_with(vec![]);
+        assert!(!p.has_buff(BuffKind::Mulligan));
+    }
+
+    #[test]
+    fn has_buff_returns_true_when_present() {
+        let p = make_player_with(vec![ActiveBuff {
+            kind: BuffKind::Mulligan,
+            used_this_round: false,
+        }]);
+        assert!(p.has_buff(BuffKind::Mulligan));
+    }
+
+    #[test]
+    fn try_consume_returns_false_when_missing() {
+        let mut p = make_player_with(vec![]);
+        assert!(!p.try_consume(BuffKind::Mulligan));
+    }
+
+    #[test]
+    fn try_consume_first_call_succeeds_then_locks() {
+        let mut p = make_player_with(vec![ActiveBuff {
+            kind: BuffKind::Mulligan,
+            used_this_round: false,
+        }]);
+        assert!(p.try_consume(BuffKind::Mulligan));
+        assert!(p.modifiers[0].used_this_round);
+        // Second call same round → false (already used).
+        assert!(!p.try_consume(BuffKind::Mulligan));
+    }
 } 
