@@ -17,14 +17,14 @@ pub(crate) struct DoneSwapButton;
 /// Transient per-round state for the Swap phase. Reset on exit so the next
 /// round begins with a clean slate.
 #[derive(Resource, Default)]
-pub(crate) struct SwapState {
+pub struct SwapState {
     /// The human's currently-staged hand card waiting for a face-up partner.
-    pub(crate) human_selected_hand: Option<Entity>,
+    pub human_selected_hand: Option<Entity>,
     /// Which AIs have completed their swap heuristic this round. Indexed by
     /// seat - 1 (human is seat 0).
-    pub(crate) ai_done: [bool; PLAYER_COUNT - 1],
+    pub ai_done: [bool; PLAYER_COUNT - 1],
     /// Set when the human clicks the Done Swapping button.
-    pub(crate) human_done: bool,
+    pub human_done: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -123,7 +123,7 @@ pub(crate) fn handle_done_swap_button(
 /// rank, picking the biggest gain each iteration until no improvement remains.
 /// Runs once per round entry into Swap; the `ai_done` flags make subsequent
 /// frames no-ops.
-pub(crate) fn ai_swap_system(
+pub fn ai_swap_system(
     mut game_state: ResMut<GameState>,
     mut swap_state: ResMut<SwapState>,
     cards: Query<&Card>,
@@ -167,7 +167,7 @@ pub(crate) fn ai_swap_system(
     }
 }
 
-pub(crate) fn advance_swap_phase(
+pub fn advance_swap_phase(
     mut game_state: ResMut<GameState>,
     mut swap_state: ResMut<SwapState>,
 ) {

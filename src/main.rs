@@ -1,15 +1,5 @@
 use bevy::prelude::*;
-
-mod ai;
-mod audio;
-mod components;
-mod rendering;
-mod rules;
-mod systems;
-mod ui;
-mod game_plugin;
-
-use game_plugin::GamePlugin;
+use shed::game_plugin::GamePlugin;
 
 fn main() {
     App::new()
