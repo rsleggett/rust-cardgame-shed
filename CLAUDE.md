@@ -60,6 +60,7 @@ src/
     mod.rs
     play_button.rs               # PlayButton, click handler, style toggle
     score_hud.rs                 # Top-right round/score widget; display-name helpers
+    rules_panel.rs               # Bottom-left rules/specials legend + active-buff explanations
     pile_status.rs               # World-space "Play X or higher" text above the pile
     game_over.rs                 # Full-screen overlay + restart_game_system
 tests/
@@ -163,6 +164,7 @@ Pool generation excludes buffs the player already has. Consumables refresh each 
 - **Pickup prompt**: pulsing yellow highlight behind the play pile when the human can't play. Click the pile or press **Space** to pick up.
 - **Play Cards button**: bottom centre; turns green when at least one card is staged.
 - **Score HUD**: top-right widget — round, target, per-player scores, per-player active buffs.
+- **Rules panel**: bottom-left always-visible widget — static rules/specials legend plus the human's drafted buffs with full descriptions (consumables marked `*` ready / `x` used). Reuses `BuffKind::display_name`/`description`.
 - **Draft overlay**: full-screen between rounds; clickable buff rows with name + description.
 
 ## Controls

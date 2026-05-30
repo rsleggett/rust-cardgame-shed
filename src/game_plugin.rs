@@ -33,6 +33,7 @@ use crate::systems::visuals::update_card_face_up_state;
 use crate::ui::game_over::{game_over_screen_system, restart_game_system};
 use crate::ui::pile_status::{update_pile_status_text, PileStatusText};
 use crate::ui::play_button::{handle_play_button, update_play_button_style, PlayButton};
+use crate::ui::rules_panel::{spawn_rules_info_panel, update_rules_info_panel};
 use crate::ui::score_hud::{spawn_score_hud, update_score_hud};
 
 /// Number of seats at the table. Used both for player setup and for sizing
@@ -98,6 +99,7 @@ impl Plugin for GamePlugin {
                 advance_swap_phase,
                 update_swap_button_visibility,
                 toggle_music_mute,
+                update_rules_info_panel,
             ));
     }
 }
@@ -212,7 +214,8 @@ fn setup_game(
         ));
     });
 
-    spawn_score_hud(&mut commands, font);
+    spawn_score_hud(&mut commands, font.clone());
+    spawn_rules_info_panel(&mut commands, font);
 
     info!("Game setup complete! Ready to deal cards.");
 }
