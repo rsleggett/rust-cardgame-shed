@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::components::card::{Card, Rank, Suit};
-use crate::rendering::card_renderer::CardAnimation;
+use crate::rendering::card_renderer::{card_resting_transform, CardAnimation};
 use crate::components::card_visual::spawn_card_complete;
 
 #[derive(Resource)]
@@ -448,7 +448,12 @@ impl GameState {
         }
     }
     
-    pub fn deal_next_card(&mut self, commands: &mut Commands, cards: &Query<&Card>) -> bool {
+    pub fn deal_next_card(
+        &mut self,
+        commands: &mut Commands,
+        cards: &Query<&Card>,
+        window_height: f32,
+    ) -> bool {
         if self.cards_to_deal.is_empty() {
             self.dealing_in_progress = false;
             // Standard Shed: swap → drafting → playing. The swap systems hand
@@ -471,38 +476,18 @@ impl GameState {
             _ => unreachable!(),
         }
         
-        // Calculate the target position
-        let y_position = if player_index == 0 {
-            -200.0 // Bottom player (Player 1)
-        } else {
-            200.0 // Top player (Player 2)
-        };
-        
-        // Position cards in appropriate rows
-        let row_offset = match set_type {
-            0 => -30.0, // Face-down cards
-            1 => 30.0,  // Face-up cards
-            2 => 90.0,  // Hand cards
-            _ => unreachable!(),
-        };
-        
-        let x_position = (set_index as f32 - 1.0) * (100.0 + 20.0); // Center the cards
-        
-        // Set z-index based on card type and position
-        let z_index = match set_type {
-            0 => 0.0 + (set_index as f32 * 0.1),    // Face-down cards
-            1 => 100.0 + (set_index as f32 * 0.1),  // Face-up cards
-            2 => 200.0 + (set_index as f32 * 0.1),  // Hand cards
-            _ => unreachable!(),
-        };
-        
-        // Add animation component
+        // Animate straight to the resting position layout_cards will keep it at,
+        // so the card lands at its real seat with no snap when the deal finishes.
+        // Hands are always dealt 3, so pass hand_count = 3 for the fan centring.
+        let (target_position, _) =
+            card_resting_transform(player_index, set_type, set_index, 3, window_height);
+
         commands.entity(card_entity)
             .insert(CardAnimation {
-                target_position: Vec3::new(x_position, y_position + row_offset, z_index),
-                start_position: Vec3::new(0.0, 0.0, 0.0), // Start from center
+                target_position,
+                start_position: Vec3::new(0.0, 0.0, 0.0), // Start from centre (draw pile)
                 progress: 0.0,
-                speed: 2.0, // Adjust speed as needed
+                speed: 2.0,
             });
         
         // Update the card's face-up state

@@ -26,9 +26,11 @@ pub(crate) fn deal_cards_system(
     time: Res<Time>,
     mut deal_timer: ResMut<DealTimer>,
     cards: Query<&Card>,
+    windows: Query<&Window>,
 ) {
     if game_state.dealing_in_progress && deal_timer.0.tick(time.delta()).just_finished() {
-        game_state.deal_next_card(&mut commands, &cards);
+        let window_height = windows.single().height();
+        game_state.deal_next_card(&mut commands, &cards, window_height);
     }
 }
 
