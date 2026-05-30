@@ -30,10 +30,17 @@ Built on the Bevy ECS (Entity Component System) game engine. The game features:
 - `src/rendering/` — rendering systems and plugins
   - `card_renderer.rs` — `CardRendererPlugin`, animation, layout
   - `card_constants.rs` — sizes, z-index layers, hand-fan parameters
+- `src/systems/` — gameplay systems (dealing, input, play, swap, draft, consumables, AI runner, visuals)
+- `src/ui/` — interactive widgets and overlays (play button, score HUD, rules panel, pile status, game over)
+- `src/rules.rs` — pure rule predicates (`can_play_card`, `is_burn`) with unit tests
 - `src/ai.rs` — per-personality AI strategy (`choose_play`)
-- `src/game_plugin.rs` — main game plugin (systems, input, draft, scoring, HUD, win/restart)
-- `src/main.rs` — application entry point
+- `src/audio.rs` — background music + Ctrl+M mute toggle
+- `src/game_plugin.rs` — `GamePlugin`: resource registration, system wiring, one-time setup
+- `src/lib.rs` — re-exports modules so the integration tests can drive them
+- `src/main.rs` — application entry point (1440×900 window)
+- `tests/` — integration tests driving real Bevy `App`s
 - `scripts/download-fonts.sh` — fetches the font assets (not tracked in git)
+- `scripts/download-music.sh` — sets up `assets/music/` and prints CC0 track sources (optional)
 
 See [CLAUDE.md](CLAUDE.md) for an architecture overview and [DEVELOPMENT.md](DEVELOPMENT.md) for design notes, per-phase decisions, and outstanding work.
 
@@ -41,7 +48,9 @@ See [CLAUDE.md](CLAUDE.md) for an architecture overview and [DEVELOPMENT.md](DEV
 
 ```bash
 ./scripts/download-fonts.sh   # one-time: fetch fonts into assets/fonts/
+./scripts/download-music.sh   # optional: set up assets/music/ for background music
 cargo run
+cargo test                    # run the unit + integration test suite
 ```
 
 ## Controls
@@ -49,22 +58,27 @@ cargo run
 | Input | Action |
 |---|---|
 | Click card | Stage / deselect (only on your turn) |
+| Double-click card | Play that card immediately, bypassing staging |
 | Enter | Confirm staged play |
 | Escape | Clear staged selection |
 | Play Cards button | Confirm staged play |
 | Click play pile / Space | Pick up cards (when prompt is active) |
+| Click hand → click face-up (during Swap) | Swap those two cards |
+| Done Swapping button | End the Swap phase |
 | Click buff row | Pick that buff during the draft phase |
 | M | Use Mulligan (if drafted, once per round) |
 | P | Use Peek (if drafted, once per round) |
+| Ctrl+M | Toggle background-music mute |
 | Any key on Game Over | Continue to next round / new match |
 
 ## Match Loop
 
 1. **Dealing** — 9 cards per player, ~5 s total.
-2. **Drafting** — pick a buff from your pool (3 normally, 5 if you were the Shed last round).
-3. **Playing** — standard Shed rules; finish your stacks and you're out (in the good way).
-4. **Game Over screen** — finish order, points awarded this round, cumulative scores, continue prompt.
-5. Repeat. First player to 10 cumulative points wins the match. New match resets buffs and personas; next round keeps them.
+2. **Swap** — optionally promote hand cards into your face-up row before play; press "Done Swapping" to confirm.
+3. **Drafting** — pick a buff from your pool (3 normally, 5 if you were the Shed last round).
+4. **Playing** — standard Shed rules; finish your stacks and you're out (in the good way).
+5. **Game Over screen** — finish order, points awarded this round, cumulative scores, continue prompt.
+6. Repeat. First player to 10 cumulative points wins the match. New match resets buffs and personas; next round keeps them.
 
 ## Future Improvements
 
@@ -90,7 +104,9 @@ cargo run
 5. **Settings** — AI count, AI speed, match target, optional rule variants.
 
 ### Quality
-1. **Unit tests** — `can_play_card`, the burn-check, `MatchState::score_for_position`, `MatchState::award_round`, `ai::choose_play` per personality, and `roll_pool` are all pure functions and easy to cover.
+The suite currently stands at **61 tests** — 28 inline unit tests over the pure logic in `src/rules.rs` and `src/components/game.rs`, plus 33 integration tests in `tests/` driving real Bevy `App`s. Still uncovered:
+1. **`ai_player_system` / `ai_draft_system`** — need a seedable RNG resource to be deterministic.
+2. **A full-round end-to-end test** — deal through to a Shed across all phases.
 
 ## License
 
