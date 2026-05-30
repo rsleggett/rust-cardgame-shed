@@ -115,6 +115,25 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 
 ---
 
+## Swap Phase
+
+**Problem.** Standard Shed lets you reshuffle your dealt hand into your face-up row before play begins. The game jumped straight from dealing to play, so a bad face-up roll was unrecoverable.
+
+**Decisions.**
+- New `GamePhase::Swap` between `Dealing` and `Drafting`. `SwapState` (transient resource) tracks the human's currently-selected hand card.
+- Human: click a hand card (highlights green), then click a face-up card to swap the two; repeat freely. The "Done Swapping" button (`DoneSwapButton`, shares the play button's slot, toggled by `update_swap_button_visibility`) confirms and advances.
+- AI: `ai_swap_system` greedily promotes any hand card whose rank beats a face-up card, picking the biggest gain each iteration until no improvement remains. Idempotent once optimal. Personality-aware swap preferences are deferred.
+- `advance_swap_phase` flips to `Drafting` once the human presses Done and the AIs have settled.
+
+---
+
+## Background Music
+
+- `audio.rs` owns `BackgroundMusic` + `MusicMuted` and the `setup_music` startup system, plus `toggle_music_mute` (Ctrl+M).
+- Music is **not tracked in git**; `scripts/download-music.sh` only creates `assets/music/` and prints CC0 sources. Drop a loop at `assets/music/lofi_loop.ogg` to enable it — the game runs silently (one-line Bevy warning) if the file is missing.
+
+---
+
 ## ECS Architecture
 
 ### Current Shape
@@ -123,14 +142,13 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 - `update_card_face_up_state` reads game state and writes component flags every frame — works but is essentially a reconciler.
 
 ### Plugin Layout
-- `GamePlugin` registers everything: resources, the `InvalidCardClicked` event, `setup_game`, and two Update tuples (split because the system list crossed Bevy 0.14's 20-system tuple ceiling once the draft systems landed).
+- `GamePlugin` registers everything: resources, the `InvalidCardClicked` event, `setup_game` + `setup_music`, and three Update tuples (split because the system list crossed Bevy 0.14's 20-system tuple ceiling as draft, swap, and audio systems landed). System bodies live in `systems::*` / `ui::*` / `audio` — the plugin is wiring only.
 - `CardRendererPlugin` owns camera setup, the pickup highlight sprite, animation, layout, and visuals.
 - Plugins are not currently ordered with `.before()` / `.after()`; the system tuple order is the only sequencing.
 
 ### Known Architectural Issues
 - `GameState` should arguably split into `GameRules` (transient flags, turn, phase) and `GameBoard` (entity collections).
 - Most state transitions happen via direct resource mutation — would benefit from an event layer (`CardPlayedEvent`, `PileBurnedEvent`, `TurnEndedEvent`, `BuffPickedEvent`).
-- The `update_game_state` system is currently a no-op placeholder.
 
 ---
 
@@ -182,20 +200,23 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 - Add system ordering for the systems whose order currently matters implicitly.
 
 ### Quality
-- No automated tests yet. Pure functions that are easy first targets: `can_play_card`, `MatchState::score_for_position`, `MatchState::award_round`, the burn-check logic inside `play_selection` (after extraction), `ai::choose_play` per personality, `roll_pool`.
-- Manual test loop: `cargo run`, deal, play a few hands per AI, trigger a 10-burn, trigger a 4-of-a-kind burn, force a pickup, draft a buff, play it, watch finish-order + score across rounds, win a match.
+- **61 tests** today: 28 inline unit tests (`src/rules.rs`, `src/components/game.rs`) over pure logic, plus 33 integration tests in `tests/` that build real Bevy `App`s and exercise `play_selection`, `pickup_cards_in_play`, `ai_swap_system`, `advance_swap_phase`, `check_valid_plays_system`, and `has_valid_play`. Shared fixtures in `tests/common/mod.rs`. Run with `cargo test`.
+- Still uncovered: `ai_player_system` / `ai_draft_system` (need a seedable RNG resource to be deterministic) and a full-round end-to-end test (deal → Shed across every phase).
+- Manual test loop: `cargo run`, deal, swap a card or two, draft a buff, play a few hands per AI, trigger a 10-burn, trigger a 4-of-a-kind burn, force a pickup, play a consumable, watch finish-order + score across rounds, win a match.
 
 ---
 
 ## Reference: System Wiring
 
-`GamePlugin` Update systems, in declared order ([game_plugin.rs](src/game_plugin.rs)). They are split across two `add_systems(Update, ...)` calls because the list exceeded Bevy 0.14's 20-tuple ceiling.
+`GamePlugin` ([game_plugin.rs](src/game_plugin.rs)) only does wiring now — the system bodies live in `systems::*` and `ui::*`, with audio in `audio`. The Update schedule is split across **three** `add_systems(Update, ...)` calls because each block hits Bevy 0.14's 20-tuple ceiling. Startup runs `setup_game` + `setup_music`.
+
+**Block 1 — core loop** (`systems::*`, `ui::*`):
 
 | System | Purpose |
 |---|---|
-| `update_game_state` | placeholder, currently no-op |
 | `update_hovered_card` | raycast cursor → entity, write `HoveredCard` |
-| `handle_mouse_input` | stage cards / handle pile pickup click |
+| `tick_last_click` | count down the double-click window (`LastClick`) |
+| `handle_mouse_input` | stage cards / double-click play / pile pickup click |
 | `handle_invalid_card_event` | drive red flash + orange text on invalid click |
 | `confirm_play_system` | Enter / Escape for staged plays |
 | `handle_play_button` | bottom-centre "Play Cards" button |
@@ -211,6 +232,11 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 | `update_score_hud` | round, target, scores, per-player buffs |
 | `game_over_screen_system` | spawn overlay on `GameOver`, award round points |
 | `restart_game_system` | any keypress on game over → next round or new match |
+
+**Block 2 — draft + consumables** (`systems::draft`, `systems::consumables`):
+
+| System | Purpose |
+|---|---|
 | `setup_draft_system` | populate `DraftState.pools` on entry to `Drafting` |
 | `draft_screen_system` | spawn the human's clickable buff overlay |
 | `handle_draft_click` | record human's pick on click |
@@ -219,6 +245,18 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 | `handle_mulligan_key` | M: swap hand ↔ face-up (consumes Mulligan) |
 | `handle_peek_key` | P: arm `PeekRevealTimer` (consumes Peek) |
 | `tick_peek_timer` | count down the peek reveal |
+
+**Block 3 — swap + audio** (`systems::swap`, `audio`):
+
+| System | Purpose |
+|---|---|
+| `handle_swap_input` | human click hand → face-up swap |
+| `handle_done_swap_button` | "Done Swapping" confirms the phase |
+| `ai_swap_system` | greedy AI hand → face-up promotion |
+| `advance_swap_phase` | flip `Swap` → `Drafting` once settled |
+| `update_swap_button_visibility` | show/hide the Done Swapping button by phase |
+| `toggle_music_mute` | Ctrl+M background-music mute |
+| `update_rules_info_panel` | rewrite the bottom-left rules/buffs panel text each frame |
 
 `CardRendererPlugin` Update systems:
 
