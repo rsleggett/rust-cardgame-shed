@@ -33,6 +33,7 @@ use crate::systems::visuals::update_card_face_up_state;
 use crate::ui::game_over::{game_over_screen_system, restart_game_system};
 use crate::ui::pile_status::{update_pile_status_text, PileStatusText};
 use crate::ui::play_button::{handle_play_button, update_play_button_style, PlayButton};
+use crate::ui::responsive::apply_responsive_layout;
 use crate::ui::rules_panel::{spawn_rules_info_panel, update_rules_info_panel};
 use crate::ui::score_hud::{spawn_score_hud, update_score_hud};
 
@@ -100,6 +101,7 @@ impl Plugin for GamePlugin {
                 update_swap_button_visibility,
                 toggle_music_mute,
                 update_rules_info_panel,
+                apply_responsive_layout,
             ));
     }
 }
