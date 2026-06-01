@@ -71,6 +71,10 @@ The web build ships silent (no bundled music track). See
 [.github/workflows/deploy-web.yml](.github/workflows/deploy-web.yml) for the deploy
 pipeline.
 
+It also works on phones: the camera auto-fits the table to any screen size and
+orientation, and the rules panel is hidden on narrow screens to avoid overflow.
+Landscape fills the screen best; portrait shows the full table as a centred band.
+
 ## Controls
 
 | Input | Action |
@@ -120,6 +124,7 @@ pipeline.
 3. **Big Hand layout fix** — hand fan currently overlaps the 4th card.
 4. **Smarter Game Over key handling** — ignore M / P so consumable hotkeys don't double as advance-round.
 5. **Settings** — AI count, AI speed, match target, optional rule variants.
+6. **Deeper mobile polish** — width-scaled HUD/buttons, a tighter portrait layout, and an on-demand rules toggle for phones (the camera already auto-fits and the rules panel hides on narrow screens).
 
 ### Quality
 The suite currently stands at **61 tests** — 28 inline unit tests over the pure logic in `src/rules.rs` and `src/components/game.rs`, plus 33 integration tests in `tests/` driving real Bevy `App`s. Still uncovered:

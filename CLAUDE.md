@@ -38,6 +38,11 @@ site from a subpath; `trunk serve` defaults to `/`. The push-to-`master` deploy
 lives in `.github/workflows/deploy-web.yml`. The web build ships silent (no
 bundled OGG). **One-time repo setup:** Settings → Pages → Source = "GitHub Actions".
 
+The build is playable on phones: the camera auto-fits the table to any canvas
+size/orientation and a width breakpoint hides the rules panel on narrow screens
+(see "Responsive sizing" under Key Architecture Notes). Landscape fills the
+screen best; portrait shows the full table as a centred band.
+
 Music is also gitignored. `scripts/download-music.sh` does not bundle a track;
 it just creates `assets/music/` and prints suggested CC0 sources. Drop a
 lo-fi OGG at `assets/music/lofi_loop.ogg` to enable background music — the
@@ -78,6 +83,7 @@ src/
   ui/
     mod.rs
     play_button.rs               # PlayButton, click handler, style toggle
+    responsive.rs                # apply_responsive_layout: width-driven UI tweaks (hide rules panel on phones)
     score_hud.rs                 # Top-right round/score widget; display-name helpers
     rules_panel.rs               # Bottom-left rules/specials legend + active-buff explanations
     pile_status.rs               # World-space "Play X or higher" text above the pile
@@ -107,6 +113,7 @@ assets/fonts/
 - **Suit rendering**: real Unicode symbols (♥♦♣♠) rendered with `NotoSansSymbols2-Regular.ttf` — rank uses `NotoSans-Regular.ttf`. Two separate `Text2dBundle` children per card so each glyph uses the right font.
 - **Table layout**: human at bottom centre; three AIs spaced across the top. Hands are fanned (rotated, arced) at the near window edge. Face-down cards sit further from the play pile, face-up closer.
 - **Play pile** is anchored at `PLAY_PILE_X = 150.0`. Only the top *finished-animating* card shows its rank/suit text (`show_text`); the rest are face-up but hidden so the stack reads cleanly.
+- **Responsive sizing**: the table lives in a fixed 1440×900 world centred on the origin. The 2D camera uses `ScalingMode::AutoMin { min_width: 1440, min_height: 900 }` ([card_renderer.rs](src/rendering/card_renderer.rs)) so that whole rect always fits any canvas (scales down on phones, never clips; exactly 1:1 on a 1440-wide desktop). Screen-space UI panels are sized in fixed logical pixels and *don't* scale with the camera, so `apply_responsive_layout` ([ui/responsive.rs](src/ui/responsive.rs)) hides the bottom-left rules panel below a 760px window width to keep it from overflowing a narrow phone canvas.
 
 ## Game Phases
 

@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::render::camera::ScalingMode;
 use crate::components::game::{GameState, GamePhase};
 use crate::components::card_visual::update_card_visuals;
 use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT, CARD_OVERLAP, Z_INDEX_STEP, PLAY_PILE_X, HAND_FAN_STEP, HAND_FAN_ANGLE, HAND_FAN_ARC};
@@ -35,7 +36,17 @@ fn setup(
 ) {
     info!("Starting card renderer setup...");
 
-    commands.spawn(Camera2dBundle::default());
+    // The table is laid out in a fixed 1440x900 world centred on the origin
+    // (the native window size). `AutoMin` keeps at least that whole rect in
+    // view on any canvas size, scaling down (never clipping) on smaller or
+    // differently-shaped screens like phones. On a 1440-wide desktop the scale
+    // is 1:1, identical to the previous default-camera behaviour.
+    let mut camera = Camera2dBundle::default();
+    camera.projection.scaling_mode = ScalingMode::AutoMin {
+        min_width: 1440.0,
+        min_height: 900.0,
+    };
+    commands.spawn(camera);
     commands.insert_resource(ClearColor(Color::srgb(0.2, 0.5, 0.2)));
 
     // Spawn the pickup-highlight sprite behind the play pile (hidden by default)
