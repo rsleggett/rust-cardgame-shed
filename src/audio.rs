@@ -2,6 +2,7 @@
 //! Asset load failure is non-fatal — Bevy logs a warning and the game runs
 //! silently. See scripts/download-music.sh.
 
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::audio::{PlaybackSettings, Volume};
 use bevy::prelude::*;
 
@@ -20,6 +21,7 @@ pub(crate) const MUSIC_VOLUME: f32 = 0.35;
 /// Spawns the background music sink on startup. The OGG asset is optional —
 /// if `assets/music/lofi_loop.ogg` is absent Bevy logs an asset-load warning
 /// and the game runs silently. See scripts/download-music.sh.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn setup_music(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         BackgroundMusic,
@@ -29,6 +31,13 @@ pub(crate) fn setup_music(mut commands: Commands, asset_server: Res<AssetServer>
         },
     ));
 }
+
+/// The web build ships without a bundled track. Crucially, a missing OGG on a
+/// static host is served as the SPA fallback (HTML), which `bevy_audio` then
+/// tries to decode and panics on (`UnrecognizedFormat`). So on wasm we skip
+/// music entirely — the game runs silent. (Native still loads the track above.)
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn setup_music() {}
 
 /// Ctrl+M toggles background-music mute. Bound under a modifier so the bare
 /// M key continues to consume Mulligan during play without ambiguity.

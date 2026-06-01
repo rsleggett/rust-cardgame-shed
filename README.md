@@ -53,6 +53,24 @@ cargo run
 cargo test                    # run the unit + integration test suite
 ```
 
+### Play in a browser (WebAssembly)
+
+The game also builds to WebAssembly and is auto-deployed to GitHub Pages on every
+merge to `master`: **https://rsleggett.github.io/rust-cardgame-shed/**
+
+To run the web build locally:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install trunk            # one-time: the wasm bundler
+./scripts/download-fonts.sh    # fonts are gitignored — fetch them first
+trunk serve                    # serves at http://localhost:8080
+```
+
+The web build ships silent (no bundled music track). See
+[.github/workflows/deploy-web.yml](.github/workflows/deploy-web.yml) for the deploy
+pipeline.
+
 ## Controls
 
 | Input | Action |

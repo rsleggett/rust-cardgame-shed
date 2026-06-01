@@ -19,6 +19,25 @@ Fonts are gitignored. `scripts/download-fonts.sh` pulls them from the
 `google/fonts` GitHub mirror into `assets/fonts/`. Re-run any time those files
 go missing — the script is idempotent (skips files that already exist).
 
+### Web (WebAssembly) build
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install trunk          # one-time
+./scripts/download-fonts.sh  # fonts are gitignored — needed before bundling
+trunk serve                  # http://localhost:8080
+trunk build --release        # static bundle in dist/
+```
+
+The same `src/main.rs` app runs on both native and wasm — `Window` carries
+web-only fields (`canvas`, `fit_canvas_to_parent`) that are ignored natively.
+`getrandom`'s `js` feature is enabled for the wasm target (see `Cargo.toml`) so
+`rand::random()` works in the browser. CI builds with
+`--public-url "/rust-cardgame-shed/"` because GitHub Pages serves the project
+site from a subpath; `trunk serve` defaults to `/`. The push-to-`master` deploy
+lives in `.github/workflows/deploy-web.yml`. The web build ships silent (no
+bundled OGG). **One-time repo setup:** Settings → Pages → Source = "GitHub Actions".
+
 Music is also gitignored. `scripts/download-music.sh` does not bundle a track;
 it just creates `assets/music/` and prints suggested CC0 sources. Drop a
 lo-fi OGG at `assets/music/lofi_loop.ogg` to enable background music — the
