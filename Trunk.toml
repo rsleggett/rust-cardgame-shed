@@ -1,0 +1,12 @@
+# Trunk build config for the web (wasm) target.
+# `public-url` is intentionally NOT set here: local dev serves from "/",
+# while the GitHub Pages project site serves from "/rust-cardgame-shed/".
+# CI passes `--public-url` on the command line; `trunk serve` defaults to "/".
+
+[build]
+target = "index.html"
+dist = "dist"
+
+[serve]
+address = "127.0.0.1"
+port = 8080

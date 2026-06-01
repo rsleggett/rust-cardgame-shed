@@ -1,5 +1,8 @@
 /target
 
+# Trunk (wasm) build output
+/dist
+
 # macOS metadata
 .DS_Store
 

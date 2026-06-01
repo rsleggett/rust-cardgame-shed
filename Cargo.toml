@@ -6,3 +6,13 @@ edition = "2021"
 [dependencies]
 bevy = "0.14.2"
 rand = "0.8.5"
+
+# On wasm32, rand's entropy source (getrandom) needs the `js` feature or
+# `rand::random()` panics at runtime ("the operation is not supported").
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+# Bevy wasm bundles are large; trade compile time for a smaller download.
+[profile.release]
+opt-level = "s"
+lto = "thin"
