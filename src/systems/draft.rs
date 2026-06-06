@@ -169,14 +169,21 @@ pub(crate) fn draft_screen_system(
             },
         ))
         .with_children(|parent| {
-            parent.spawn(TextBundle::from_section(
-                header,
-                TextStyle {
-                    font: font.clone(),
-                    font_size: 36.0,
-                    color: Color::WHITE,
-                },
-            ));
+            parent.spawn(
+                TextBundle::from_section(
+                    header,
+                    TextStyle {
+                        font: font.clone(),
+                        font_size: 36.0,
+                        color: Color::WHITE,
+                    },
+                )
+                .with_text_justify(JustifyText::Center)
+                .with_style(Style {
+                    max_width: Val::Percent(90.0),
+                    ..default()
+                }),
+            );
             parent.spawn(TextBundle {
                 text: Text::from_section(
                     "Click a perk to add it to your run",
@@ -199,7 +206,11 @@ pub(crate) fn draft_screen_system(
                         DraftOption(kind),
                         ButtonBundle {
                             style: Style {
-                                width: Val::Px(460.0),
+                                // Responsive: fills most of a narrow portrait
+                                // phone but caps at the original desktop width so
+                                // the rows don't sprawl on a wide screen.
+                                width: Val::Percent(90.0),
+                                max_width: Val::Px(460.0),
                                 padding: UiRect::all(Val::Px(12.0)),
                                 flex_direction: FlexDirection::Column,
                                 row_gap: Val::Px(4.0),
