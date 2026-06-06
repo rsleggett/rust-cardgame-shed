@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use crate::components::card::{Card, Rank};
 use crate::components::game::{BuffKind, GamePhase, GameState, Player};
 use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X, Z_INDEX_STEP};
-use crate::rendering::card_renderer::CardAnimation;
+use crate::rendering::card_renderer::{CardAnimation, Layout};
 use crate::rules::{can_play_card, is_burn};
 
 pub fn has_valid_play(
@@ -265,7 +265,7 @@ pub(crate) fn draw_refill_system(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
     time: Res<Time>,
-    windows: Query<&Window>,
+    layout: Res<Layout>,
 ) {
     if !game_state.pending_refill || game_state.phase != GamePhase::Playing { return; }
 
@@ -275,8 +275,9 @@ pub(crate) fn draw_refill_system(
         return;
     }
 
-    let window_height = windows.single().height();
-    let hand_base_y = -window_height / 2.0 + CARD_HEIGHT / 2.0;
+    // Approximate target at the human hand's bottom-edge anchor in design space
+    // (layout_cards snaps to the exact fan position once the animation finishes).
+    let hand_base_y = -layout.design_height / 2.0 + CARD_HEIGHT / 2.0;
     let refill_target = target_hand_size(&game_state.players[0]);
 
     while game_state.players[0].hand.len() < refill_target && !game_state.draw_pile.is_empty() {

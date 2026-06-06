@@ -34,6 +34,23 @@ pub(crate) struct LastClick {
 
 pub(crate) const DOUBLE_CLICK_WINDOW: f32 = 0.3;
 
+/// The primary pointer-press position this frame in window/viewport space: a
+/// left mouse-button press, or failing that the first newly-pressed touch.
+/// Touch positions share the same coordinate space as `cursor_position`, so the
+/// world-space hit-testing downstream is identical for mouse and touch — this is
+/// what makes the table playable on a phone.
+pub(crate) fn primary_pointer_press(
+    mouse: &ButtonInput<MouseButton>,
+    touches: &Touches,
+    window: &Window,
+) -> Option<Vec2> {
+    if mouse.just_pressed(MouseButton::Left) {
+        window.cursor_position()
+    } else {
+        touches.iter_just_pressed().next().map(|t| t.position())
+    }
+}
+
 pub(crate) fn update_hovered_card(
     mut hovered: ResMut<HoveredCard>,
     game_state: Res<GameState>,
@@ -104,21 +121,19 @@ pub(crate) fn handle_mouse_input(
     transforms: Query<&GlobalTransform>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
+    touches: Res<Touches>,
     mut invalid_ev: EventWriter<InvalidCardClicked>,
     mut last_click: ResMut<LastClick>,
 ) {
     if game_state.phase != GamePhase::Playing {
         return;
     }
-    if !mouse_button_input.just_pressed(MouseButton::Left) {
-        return;
-    }
 
     let (camera, camera_transform) = camera_q.single();
     let window = windows.single();
 
-    let Some(cursor_position) = window.cursor_position() else { return; };
-    let Some(world_position) = camera.viewport_to_world_2d(camera_transform, cursor_position) else { return; };
+    let Some(pointer) = primary_pointer_press(&mouse_button_input, &touches, window) else { return; };
+    let Some(world_position) = camera.viewport_to_world_2d(camera_transform, pointer) else { return; };
 
     // Click play pile to pick up when required. While pickup is pending, no
     // other card interaction is allowed — the player must pick up before

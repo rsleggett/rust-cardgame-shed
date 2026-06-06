@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use crate::components::card::{Card, Rank, Suit};
-use crate::rendering::card_renderer::{card_resting_transform, CardAnimation};
+use crate::rendering::card_renderer::{card_resting_transform, CardAnimation, Layout};
 use crate::components::card_visual::spawn_card_complete;
 
 #[derive(Resource)]
@@ -452,7 +452,7 @@ impl GameState {
         &mut self,
         commands: &mut Commands,
         cards: &Query<&Card>,
-        window_height: f32,
+        layout: &Layout,
     ) -> bool {
         if self.cards_to_deal.is_empty() {
             self.dealing_in_progress = false;
@@ -479,16 +479,26 @@ impl GameState {
         // Animate straight to the resting position layout_cards will keep it at,
         // so the card lands at its real seat with no snap when the deal finishes.
         // Hands are always dealt 3, so pass hand_count = 3 for the fan centring.
-        let (target_position, _) =
-            card_resting_transform(player_index, set_type, set_index, 3, window_height);
+        let (target_position, _, scale) =
+            card_resting_transform(player_index, set_type, set_index, 3, layout);
 
+        // Apply the seat scale up front (the animation only drives translation),
+        // so a shrunken portrait-AI card flies in already at size — no snap when
+        // layout_cards takes over.
         commands.entity(card_entity)
-            .insert(CardAnimation {
-                target_position,
-                start_position: Vec3::new(0.0, 0.0, 0.0), // Start from centre (draw pile)
-                progress: 0.0,
-                speed: 2.0,
-            });
+            .insert((
+                Transform {
+                    translation: Vec3::ZERO,
+                    rotation: Quat::IDENTITY,
+                    scale: Vec3::splat(scale),
+                },
+                CardAnimation {
+                    target_position,
+                    start_position: Vec3::new(0.0, 0.0, 0.0), // Start from centre (draw pile)
+                    progress: 0.0,
+                    speed: 2.0,
+                },
+            ));
         
         // Update the card's face-up state
         if let Ok(card) = cards.get(card_entity) {
