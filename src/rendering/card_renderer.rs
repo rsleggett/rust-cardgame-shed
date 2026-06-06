@@ -1,9 +1,11 @@
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
+use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
 use crate::components::game::{GameState, GamePhase};
 use crate::components::card_visual::update_card_visuals;
 use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT, CARD_OVERLAP, Z_INDEX_STEP, PLAY_PILE_X, HAND_FAN_STEP, HAND_FAN_ANGLE, HAND_FAN_ARC};
 use crate::systems::input::HoveredCard;
+use crate::ui::score_hud::player_display_name;
 
 /// Marker for the highlight sprite shown on the play pile when the player must pick up.
 #[derive(Component)]
@@ -29,7 +31,7 @@ impl Plugin for CardRendererPlugin {
                layout_cards,
                update_card_visuals,
                update_pickup_highlight,
-               update_seat_highlight,
+               update_turn_chip,
            ));
     }
 }
@@ -76,6 +78,9 @@ impl Layout {
 
 fn setup(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     info!("Starting card renderer setup...");
 
@@ -108,33 +113,66 @@ fn setup(
         },
     ));
 
-    // One active-seat highlight per seat — a soft glow behind that seat's card
-    // block, shown only when it's that seat's turn. Positioned per-frame by
-    // `update_seat_highlight` so it tracks the orientation-aware seat anchors.
-    for seat in 0..4usize {
-        commands.spawn((
-            SeatHighlight { seat },
-            SpriteBundle {
-                sprite: Sprite {
-                    color: Color::srgba(1.0, 0.85, 0.2, 0.0),
-                    custom_size: Some(Vec2::new(CARD_WIDTH * 3.6, CARD_HEIGHT * 1.6)),
-                    ..default()
-                },
-                transform: Transform::from_xyz(0.0, 0.0, 3.0),
+    // "Whose turn" poker chip — a single round token repositioned below the
+    // active seat's cards each frame by `update_turn_chip`. A solid chip reads
+    // clearly distinct from the pulsing pickup highlight (the old seat glow was
+    // too easily confused with it). Hidden until play begins.
+    let chip_font = asset_server.load("fonts/NotoSans-Regular.ttf");
+    commands
+        .spawn((
+            TurnChip,
+            SpatialBundle {
+                transform: Transform::from_xyz(0.0, 0.0, 700.0),
                 visibility: Visibility::Hidden,
                 ..default()
             },
-        ));
-    }
+        ))
+        .with_children(|chip| {
+            // White rim, then the coloured disc on top.
+            chip.spawn(MaterialMesh2dBundle {
+                mesh: Mesh2dHandle(meshes.add(Circle::new(TURN_CHIP_RADIUS + 4.0))),
+                material: materials.add(Color::srgb(0.96, 0.96, 0.96)),
+                transform: Transform::from_xyz(0.0, 0.0, -0.2),
+                ..default()
+            });
+            chip.spawn(MaterialMesh2dBundle {
+                mesh: Mesh2dHandle(meshes.add(Circle::new(TURN_CHIP_RADIUS))),
+                material: materials.add(Color::srgb(0.78, 0.12, 0.16)),
+                transform: Transform::from_xyz(0.0, 0.0, -0.1),
+                ..default()
+            });
+            chip.spawn((
+                TurnChipLabel,
+                Text2dBundle {
+                    text: Text::from_section(
+                        "Your turn",
+                        TextStyle { font: chip_font, font_size: 16.0, color: Color::WHITE },
+                    )
+                    .with_justify(JustifyText::Center),
+                    text_2d_bounds: bevy::text::Text2dBounds {
+                        size: Vec2::new(TURN_CHIP_RADIUS * 1.7, TURN_CHIP_RADIUS * 2.0),
+                    },
+                    transform: Transform::from_xyz(0.0, 0.0, 0.1),
+                    ..default()
+                },
+            ));
+        });
 
     info!("Card renderer setup complete!");
 }
 
-/// Behind-the-seat glow marking whose turn it is during play.
+/// Radius of the "whose turn" poker chip in design-space units.
+const TURN_CHIP_RADIUS: f32 = 44.0;
+
+/// The single "whose turn" poker chip. Repositioned below the active seat's
+/// cards each frame; its label switches between "Your turn" and the active AI's
+/// name.
 #[derive(Component)]
-pub struct SeatHighlight {
-    pub seat: usize,
-}
+pub struct TurnChip;
+
+/// Marker on the chip's text child so the turn label can be rewritten.
+#[derive(Component)]
+pub struct TurnChipLabel;
 
 /// Recomputes the active screen orientation from the window aspect and, on a
 /// flip, swaps the `Layout` design rect and the camera's `AutoMin` extents.
@@ -241,9 +279,16 @@ pub(crate) fn card_resting_transform(
         }
         _ => {
             let hand_base_y = if is_bottom {
-                // Human hand sits at the bottom edge of the design rect (not the
-                // live window) so it no longer drifts with the AutoMin scale.
-                -layout.design_height / 2.0 + CARD_HEIGHT / 2.0
+                // Human hand sits near the bottom edge of the design rect (not the
+                // live window) so it no longer drifts with the AutoMin scale. In
+                // portrait it's lifted clear of the bottom-centre Play/Done button
+                // (a ~52px screen-space widget) so the two don't overlap on a phone.
+                let base = -layout.design_height / 2.0 + CARD_HEIGHT / 2.0;
+                if layout.orientation == Orientation::Portrait {
+                    base + 150.0
+                } else {
+                    base
+                }
             } else if layout.orientation == Orientation::Portrait {
                 // AI hands ride just outside their face rows in the compact strip
                 // rather than at the far top edge, so the seat reads as a unit.
@@ -344,30 +389,44 @@ fn layout_cards(
     }
 }
 
-/// Positions each seat's turn-glow at its (orientation-aware) anchor and shows
-/// only the active seat's glow during play.
-fn update_seat_highlight(
+/// Parks the "whose turn" poker chip below the active seat's card block and
+/// rewrites its label ("Your turn" for the human, the AI's name otherwise).
+/// Hidden whenever play isn't live or the active seat has already finished.
+fn update_turn_chip(
     game_state: Res<GameState>,
     layout: Res<Layout>,
-    time: Res<Time>,
-    mut query: Query<(&SeatHighlight, &mut Transform, &mut Sprite, &mut Visibility)>,
+    mut chip_q: Query<(&mut Transform, &mut Visibility), With<TurnChip>>,
+    mut label_q: Query<&mut Text, With<TurnChipLabel>>,
 ) {
-    for (hl, mut transform, mut sprite, mut vis) in &mut query {
-        let (table_x, face_y, _) = seat_anchor(hl.seat, layout.orientation);
-        let scale = seat_scale(hl.seat, layout.orientation);
-        transform.translation.x = table_x;
-        transform.translation.y = face_y;
-        transform.scale = Vec3::splat(scale);
+    let Ok((mut transform, mut vis)) = chip_q.get_single_mut() else { return; };
 
-        let active = game_state.phase == GamePhase::Playing
-            && game_state.current_player == hl.seat
-            && !game_state.finish_order.contains(&hl.seat);
-        if active {
-            *vis = Visibility::Visible;
-            let alpha = 0.18 + 0.12 * (time.elapsed_seconds() * 3.0).sin();
-            sprite.color = Color::srgba(1.0, 0.85, 0.2, alpha);
+    let seat = game_state.current_player;
+    let active = game_state.phase == GamePhase::Playing
+        && seat < game_state.players.len()
+        && !game_state.finish_order.contains(&seat);
+    if !active {
+        *vis = Visibility::Hidden;
+        return;
+    }
+    *vis = Visibility::Visible;
+
+    let (table_x, face_y, is_bottom) = seat_anchor(seat, layout.orientation);
+    let scale = seat_scale(seat, layout.orientation);
+    // Sit the chip just below the seat's table cards (toward the centre of the
+    // table), out of the pile + hand action so it's never mistaken for the
+    // pickup pulse.
+    let chip_y = if is_bottom { face_y - 120.0 } else { face_y - 70.0 * scale };
+    transform.translation = Vec3::new(table_x, chip_y, 700.0);
+    transform.scale = Vec3::splat(if is_bottom { 1.0 } else { scale });
+
+    if let Ok(mut text) = label_q.get_single_mut() {
+        let label = if seat == 0 {
+            "Your turn".to_string()
         } else {
-            *vis = Visibility::Hidden;
+            player_display_name(&game_state, seat)
+        };
+        if text.sections[0].value != label {
+            text.sections[0].value = label;
         }
     }
 }
