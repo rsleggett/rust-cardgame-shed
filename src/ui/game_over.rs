@@ -8,6 +8,7 @@ use crate::components::card::Card;
 use crate::components::game::{GamePhase, GameState, MatchState};
 use crate::game_plugin::{add_match_players, MATCH_TARGET, PLAYER_COUNT};
 use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X};
+use crate::rendering::card_renderer::SeatAvatar;
 use crate::systems::swap::SwapState;
 use crate::theme;
 use crate::ui::pile_status::PileStatusText;
@@ -302,6 +303,7 @@ pub(crate) fn restart_game_system(
     card_q: Query<Entity, With<Card>>,
     screen_q: Query<Entity, With<GameOverScreen>>,
     status_q: Query<Entity, With<PileStatusText>>,
+    avatar_q: Query<Entity, With<SeatAvatar>>,
     asset_server: Res<AssetServer>,
 ) {
     if game_state.phase != GamePhase::GameOver { return; }
@@ -328,6 +330,9 @@ pub(crate) fn restart_game_system(
     // correct personas (a fresh roster on new-match, the same as before
     // on next-round).
     if match_was_over {
+        // Seat avatars cache each AI's name/colour/mood, so a fresh roster
+        // needs them rebuilt — despawn so manage_seat_avatars respawns them.
+        for e in avatar_q.iter() { commands.entity(e).despawn_recursive(); }
         *match_state = MatchState::new(PLAYER_COUNT, MATCH_TARGET);
         info!("Match reset — new opponents drawn");
     } else {
