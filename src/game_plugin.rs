@@ -30,9 +30,12 @@ use crate::systems::swap::{
     update_swap_button_visibility, DoneSwapButton, SwapState,
 };
 use crate::systems::visuals::update_card_face_up_state;
+use crate::theme;
 use crate::ui::game_over::{game_over_screen_system, restart_game_system};
 use crate::ui::pile_status::{update_pile_status_text, PileStatusText};
-use crate::ui::play_button::{handle_play_button, update_play_button_style, PlayButton};
+use crate::ui::play_button::{
+    depress_buttons, handle_play_button, update_play_button_style, PlayButton,
+};
 use crate::ui::responsive::apply_responsive_layout;
 use crate::ui::rules_panel::{spawn_rules_info_panel, update_rules_info_panel};
 use crate::ui::score_hud::{spawn_score_hud, update_score_hud};
@@ -102,6 +105,7 @@ impl Plugin for GamePlugin {
                 toggle_music_mute,
                 update_rules_info_panel,
                 apply_responsive_layout,
+                depress_buttons,
             ));
     }
 }
@@ -147,77 +151,98 @@ fn setup_game(
 ) {
     add_match_players(&mut game_state, &match_state);
 
-    let font = asset_server.load("fonts/NotoSans-Regular.ttf");
+    let ui_font = asset_server.load("fonts/Rubik-Regular.ttf");
     let suit_font = asset_server.load("fonts/NotoSansSymbols2-Regular.ttf");
-    game_state.prepare_dealing(&mut commands, font.clone(), suit_font);
+    let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
+    game_state.prepare_dealing(&mut commands, ui_font.clone(), suit_font, pixel_font.clone());
 
-    // Pile status text — world-space Text2d above the play pile
+    // Pile status text — world-space Text2d above the play pile (gold neon prompt)
     commands.spawn((
         PileStatusText,
         Text2dBundle {
             text: Text::from_section(
                 "",
-                TextStyle { font: font.clone(), font_size: 16.0, color: Color::WHITE },
+                TextStyle { font: pixel_font.clone(), font_size: 16.0, color: theme::GOLD },
             ),
             transform: Transform::from_xyz(PLAY_PILE_X, CARD_HEIGHT / 2.0 + 24.0, 600.0),
             ..default()
         },
     ));
 
-    // "Play Cards" button — absolute-positioned near the bottom centre of the screen
-    commands.spawn((
+    // "Play Cards" button — chunky lime, bottom-centre. Active styling toggled
+    // by update_play_button_style.
+    spawn_chunky_button(
+        &mut commands,
         PlayButton,
-        ButtonBundle {
-            style: Style {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(12.0),
-                left: Val::Percent(50.0),
-                margin: UiRect::left(Val::Px(-64.0)), // centre the 128px button
-                width: Val::Px(128.0),
-                height: Val::Px(40.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-            background_color: Color::srgb(0.25, 0.25, 0.25).into(),
-            ..default()
-        },
-    )).with_children(|parent| {
-        parent.spawn(TextBundle::from_section(
-            "Play Cards",
-            TextStyle { font: font.clone(), font_size: 18.0, color: Color::WHITE },
-        ));
-    });
+        "PLAY ▸",
+        theme::LIME,
+        128.0,
+        false,
+        ui_font.clone(),
+    );
 
-    // "Done Swapping" button — shares the play button's slot. Hidden by
-    // default; update_swap_button_visibility toggles based on phase.
-    commands.spawn((
+    // "Done Swapping" button — shares the play button's slot, hidden by default.
+    spawn_chunky_button(
+        &mut commands,
         DoneSwapButton,
-        ButtonBundle {
-            style: Style {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(12.0),
-                left: Val::Percent(50.0),
-                margin: UiRect::left(Val::Px(-72.0)), // centre the 144px button
-                width: Val::Px(144.0),
-                height: Val::Px(40.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                display: Display::None,
-                ..default()
-            },
-            background_color: Color::srgb(0.15, 0.55, 0.15).into(),
-            ..default()
-        },
-    )).with_children(|parent| {
-        parent.spawn(TextBundle::from_section(
-            "Done Swapping",
-            TextStyle { font: font.clone(), font_size: 16.0, color: Color::WHITE },
-        ));
-    });
+        "DONE SWAPPING",
+        theme::CYAN,
+        160.0,
+        true,
+        ui_font.clone(),
+    );
 
-    spawn_score_hud(&mut commands, font.clone());
-    spawn_rules_info_panel(&mut commands, font);
+    spawn_score_hud(&mut commands, ui_font.clone(), pixel_font.clone());
+    spawn_rules_info_panel(&mut commands, ui_font, pixel_font);
 
     info!("Game setup complete! Ready to deal cards.");
+}
+
+/// Spawns a Balatro-style "chunky" button: bright fill, a solid darker bottom
+/// edge (faked with a thick bottom border, since bevy_ui 0.14 has no box-shadow),
+/// a translucent white rim (`Outline`), and rounded corners. Bottom-centre,
+/// absolute-positioned. Shared by the Play and Done-Swapping buttons.
+pub(crate) fn spawn_chunky_button<M: Component>(
+    commands: &mut Commands,
+    marker: M,
+    label: &str,
+    fill: Color,
+    width: f32,
+    hidden: bool,
+    font: Handle<Font>,
+) {
+    commands
+        .spawn((
+            marker,
+            ButtonBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(12.0),
+                    left: Val::Percent(50.0),
+                    margin: UiRect::left(Val::Px(-width / 2.0)),
+                    width: Val::Px(width),
+                    height: Val::Px(44.0),
+                    border: UiRect::bottom(Val::Px(5.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    display: if hidden { Display::None } else { Display::Flex },
+                    ..default()
+                },
+                background_color: fill.into(),
+                border_color: theme::chunky_shadow(fill).into(),
+                border_radius: BorderRadius::all(Val::Px(12.0)),
+                ..default()
+            },
+            Outline {
+                width: Val::Px(2.0),
+                offset: Val::Px(0.0),
+                color: Color::srgba(1.0, 1.0, 1.0, 0.35),
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                label,
+                TextStyle { font, font_size: 16.0, color: Color::srgb(0.10, 0.06, 0.10) },
+            ));
+        });
 }

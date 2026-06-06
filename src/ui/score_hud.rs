@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 
 use crate::components::game::{GameState, MatchState};
+use crate::theme;
 
 /// Marker on the always-visible score widget (top-right of the screen).
 #[derive(Component)]
@@ -15,7 +16,11 @@ pub(crate) struct ScoreHudText;
 
 /// Spawns the top-right round/score widget. Persists across restarts; its text
 /// is rewritten each frame by `update_score_hud`.
-pub(crate) fn spawn_score_hud(commands: &mut Commands, font: Handle<Font>) {
+pub(crate) fn spawn_score_hud(
+    commands: &mut Commands,
+    ui_font: Handle<Font>,
+    pixel_font: Handle<Font>,
+) {
     commands
         .spawn((
             ScoreHud,
@@ -28,23 +33,33 @@ pub(crate) fn spawn_score_hud(commands: &mut Commands, font: Handle<Font>) {
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(2.0),
                     min_width: Val::Px(170.0),
+                    border: UiRect::all(Val::Px(1.5)),
                     ..default()
                 },
-                background_color: Color::srgba(0.0, 0.0, 0.0, 0.45).into(),
+                background_color: theme::PANEL.into(),
+                border_color: theme::GOLD.with_alpha(0.35).into(),
+                border_radius: BorderRadius::all(Val::Px(9.0)),
                 ..default()
             },
         ))
         .with_children(|parent| {
             parent.spawn((
                 ScoreHudText,
-                TextBundle::from_section(
-                    "",
-                    TextStyle {
-                        font,
-                        font_size: 14.0,
-                        color: Color::srgba(1.0, 1.0, 1.0, 0.95),
-                    },
-                ),
+                TextBundle::from_sections([
+                    // Header (gold, pixel font) then the per-seat body (ui font).
+                    TextSection::new(
+                        "",
+                        TextStyle { font: pixel_font, font_size: 13.0, color: theme::GOLD },
+                    ),
+                    TextSection::new(
+                        "",
+                        TextStyle {
+                            font: ui_font,
+                            font_size: 14.0,
+                            color: Color::srgba(1.0, 1.0, 1.0, 0.95),
+                        },
+                    ),
+                ]),
             ));
         });
 }
@@ -104,5 +119,6 @@ pub(crate) fn update_score_hud(
             }
         }
     }
-    text.sections[0].value = format!("{}{}", header, body);
+    text.sections[0].value = header;
+    text.sections[1].value = body;
 }

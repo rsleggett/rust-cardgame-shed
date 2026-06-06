@@ -5,11 +5,12 @@
 use bevy::prelude::*;
 
 use crate::components::game::GameState;
+use crate::theme;
 
 /// Static rules + special-card legend. Wording mirrors the rule comments in
-/// `rules.rs` and the CLAUDE.md "Shed Rules" section.
-const RULES_LEGEND: &str = "SHED\n\
-Play a card >= the pile, or pick up.\n\
+/// `rules.rs` and the CLAUDE.md "Shed Rules" section. The "SHED" title is the
+/// pixel-font header section; this body is the ui-font section beneath it.
+const RULES_LEGEND: &str = "Play a card >= the pile, or pick up.\n\
 Empty hand -> face-up -> face-down to get out.\n\
 Last player left is the Shed.\n\
 \n\
@@ -30,7 +31,11 @@ pub(crate) struct RulesInfoText;
 
 /// Spawns the bottom-left rules/buffs panel. Persists across restarts; its text
 /// is rewritten each frame by `update_rules_info_panel`.
-pub(crate) fn spawn_rules_info_panel(commands: &mut Commands, font: Handle<Font>) {
+pub(crate) fn spawn_rules_info_panel(
+    commands: &mut Commands,
+    ui_font: Handle<Font>,
+    pixel_font: Handle<Font>,
+) {
     commands
         .spawn((
             RulesInfoPanel,
@@ -42,23 +47,33 @@ pub(crate) fn spawn_rules_info_panel(commands: &mut Commands, font: Handle<Font>
                     padding: UiRect::all(Val::Px(12.0)),
                     flex_direction: FlexDirection::Column,
                     max_width: Val::Px(400.0),
+                    border: UiRect::all(Val::Px(1.5)),
                     ..default()
                 },
-                background_color: Color::srgba(0.0, 0.0, 0.0, 0.45).into(),
+                background_color: theme::PANEL.into(),
+                border_color: theme::GOLD.with_alpha(0.35).into(),
+                border_radius: BorderRadius::all(Val::Px(9.0)),
                 ..default()
             },
         ))
         .with_children(|parent| {
             parent.spawn((
                 RulesInfoText,
-                TextBundle::from_section(
-                    "",
-                    TextStyle {
-                        font,
-                        font_size: 17.0,
-                        color: Color::srgba(1.0, 1.0, 1.0, 0.95),
-                    },
-                ),
+                TextBundle::from_sections([
+                    // Title (gold, pixel font) then the legend/buffs body (ui font).
+                    TextSection::new(
+                        "SHED\n",
+                        TextStyle { font: pixel_font, font_size: 14.0, color: theme::GOLD },
+                    ),
+                    TextSection::new(
+                        "",
+                        TextStyle {
+                            font: ui_font,
+                            font_size: 15.0,
+                            color: Color::srgba(1.0, 1.0, 1.0, 0.95),
+                        },
+                    ),
+                ]),
             ));
         });
 }
@@ -90,5 +105,5 @@ pub(crate) fn update_rules_info_panel(
         _ => body.push_str("\n(none yet - draft one each round)"),
     }
 
-    text.sections[0].value = body;
+    text.sections[1].value = body;
 }

@@ -1,11 +1,16 @@
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
-use crate::components::game::{GameState, GamePhase};
+use crate::components::game::{GameState, GamePhase, MatchState};
 use crate::components::card_visual::update_card_visuals;
 use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT, CARD_OVERLAP, Z_INDEX_STEP, PLAY_PILE_X, HAND_FAN_STEP, HAND_FAN_ANGLE, HAND_FAN_ARC};
 use crate::systems::input::HoveredCard;
-use crate::ui::score_hud::player_display_name;
+use crate::theme;
+
+/// When set, the arcade "juice" (score pops, burn flashes) degrades to nothing
+/// so the game runs still. Defaults off; future settings UI can flip it.
+#[derive(Resource, Default)]
+pub struct ReducedMotion(pub bool);
 
 /// Marker for the highlight sprite shown on the play pile when the player must pick up.
 #[derive(Component)]
@@ -24,6 +29,7 @@ pub struct CardRendererPlugin;
 impl Plugin for CardRendererPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Layout>()
+           .init_resource::<ReducedMotion>()
            .add_systems(Startup, setup)
            .add_systems(Update, (
                update_layout,
@@ -32,6 +38,11 @@ impl Plugin for CardRendererPlugin {
                update_card_visuals,
                update_pickup_highlight,
                update_turn_chip,
+               manage_seat_avatars,
+               update_pile_badge,
+               update_floating_text,
+               update_burn_flash,
+               detect_juice_events,
            ));
     }
 }
@@ -96,7 +107,87 @@ fn setup(
         min_height: layout.design_height,
     };
     commands.spawn(camera);
-    commands.insert_resource(ClearColor(Color::srgb(0.2, 0.5, 0.2)));
+    // Felt-dark fills the letterbox bars around the design rect; the felt-base
+    // table sits on top of it.
+    commands.insert_resource(ClearColor(theme::FELT_DARK));
+
+    // Felt table: a large base sprite (covers both the landscape and portrait
+    // design rects) far behind everything, with a slightly darker vignette plate
+    // on top for the rim feel. A true radial gradient needs a shader — deferred.
+    commands.spawn(SpriteBundle {
+        sprite: Sprite {
+            color: theme::FELT_BASE,
+            custom_size: Some(Vec2::new(2600.0, 2600.0)),
+            ..default()
+        },
+        transform: Transform::from_xyz(0.0, 0.0, -200.0),
+        ..default()
+    });
+    commands.spawn(SpriteBundle {
+        sprite: Sprite {
+            color: theme::FELT_INK.with_alpha(0.30),
+            custom_size: Some(Vec2::new(2600.0, 2600.0)),
+            ..default()
+        },
+        transform: Transform::from_xyz(0.0, 0.0, -199.0),
+        ..default()
+    });
+
+    // Gold inset frame rim — a screen-space bordered node so it always hugs the
+    // visible canvas regardless of orientation. FocusPolicy::Pass so it never
+    // eats button clicks.
+    commands.spawn(NodeBundle {
+        style: Style {
+            position_type: PositionType::Absolute,
+            // Inset on all four sides instead of width/height + margin, which
+            // overflows the viewport and clips the bottom/right edges.
+            top: Val::Px(8.0),
+            left: Val::Px(8.0),
+            right: Val::Px(8.0),
+            bottom: Val::Px(8.0),
+            border: UiRect::all(Val::Px(2.0)),
+            ..default()
+        },
+        border_color: theme::GOLD.with_alpha(0.35).into(),
+        border_radius: BorderRadius::all(Val::Px(14.0)),
+        focus_policy: bevy::ui::FocusPolicy::Pass,
+        ..default()
+    });
+
+    // Pile-count badge — a magenta pill parked top-right of the play pile,
+    // showing the live `×N` stack size. Hidden when the pile is empty.
+    let badge_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
+    commands
+        .spawn((
+            PileCountBadge,
+            SpriteBundle {
+                sprite: Sprite {
+                    color: theme::MAGENTA,
+                    custom_size: Some(Vec2::new(46.0, 24.0)),
+                    ..default()
+                },
+                transform: Transform::from_xyz(
+                    PLAY_PILE_X + CARD_WIDTH / 2.0 + 4.0,
+                    CARD_HEIGHT / 2.0 - 4.0,
+                    620.0,
+                ),
+                visibility: Visibility::Hidden,
+                ..default()
+            },
+        ))
+        .with_children(|badge| {
+            badge.spawn((
+                PileCountText,
+                Text2dBundle {
+                    text: Text::from_section(
+                        "",
+                        TextStyle { font: badge_font, font_size: 12.0, color: Color::WHITE },
+                    ),
+                    transform: Transform::from_xyz(0.0, 0.0, 0.1),
+                    ..default()
+                },
+            ));
+        });
 
     // Spawn the pickup-highlight sprite behind the play pile (hidden by default)
     commands.spawn((
@@ -117,7 +208,7 @@ fn setup(
     // active seat's cards each frame by `update_turn_chip`. A solid chip reads
     // clearly distinct from the pulsing pickup highlight (the old seat glow was
     // too easily confused with it). Hidden until play begins.
-    let chip_font = asset_server.load("fonts/NotoSans-Regular.ttf");
+    let chip_font = asset_server.load("fonts/Rubik-Regular.ttf");
     commands
         .spawn((
             TurnChip,
@@ -389,45 +480,13 @@ fn layout_cards(
     }
 }
 
-/// Parks the "whose turn" poker chip below the active seat's card block and
-/// rewrites its label ("Your turn" for the human, the AI's name otherwise).
-/// Hidden whenever play isn't live or the active seat has already finished.
-fn update_turn_chip(
-    game_state: Res<GameState>,
-    layout: Res<Layout>,
-    mut chip_q: Query<(&mut Transform, &mut Visibility), With<TurnChip>>,
-    mut label_q: Query<&mut Text, With<TurnChipLabel>>,
-) {
-    let Ok((mut transform, mut vis)) = chip_q.get_single_mut() else { return; };
-
-    let seat = game_state.current_player;
-    let active = game_state.phase == GamePhase::Playing
-        && seat < game_state.players.len()
-        && !game_state.finish_order.contains(&seat);
-    if !active {
+/// The "whose turn" poker chip is disabled for now: the seat avatars + the
+/// active-seat gold ring already signal whose turn it is, and the chip overlapped
+/// cards in some layouts. The chip entity is still spawned (hidden) so this can
+/// be reverted by restoring the positioning logic from git history.
+fn update_turn_chip(mut chip_q: Query<&mut Visibility, With<TurnChip>>) {
+    if let Ok(mut vis) = chip_q.get_single_mut() {
         *vis = Visibility::Hidden;
-        return;
-    }
-    *vis = Visibility::Visible;
-
-    let (table_x, face_y, is_bottom) = seat_anchor(seat, layout.orientation);
-    let scale = seat_scale(seat, layout.orientation);
-    // Sit the chip just below the seat's table cards (toward the centre of the
-    // table), out of the pile + hand action so it's never mistaken for the
-    // pickup pulse.
-    let chip_y = if is_bottom { face_y - 120.0 } else { face_y - 70.0 * scale };
-    transform.translation = Vec3::new(table_x, chip_y, 700.0);
-    transform.scale = Vec3::splat(if is_bottom { 1.0 } else { scale });
-
-    if let Ok(mut text) = label_q.get_single_mut() {
-        let label = if seat == 0 {
-            "Your turn".to_string()
-        } else {
-            player_display_name(&game_state, seat)
-        };
-        if text.sections[0].value != label {
-            text.sections[0].value = label;
-        }
     }
 }
 
@@ -447,6 +506,289 @@ fn update_card_animations(
             commands.entity(entity).remove::<CardAnimation>();
         }
     }
+}
+
+// ── Seat avatars + mood tags + active-seat ring ────────────────────────────
+
+/// Radius of an AI seat's avatar disc, in design-space units.
+const AVATAR_RADIUS: f32 = 26.0;
+
+/// Root marker for an AI seat's avatar cluster (disc + monogram + name + mood).
+#[derive(Component)]
+pub struct SeatAvatar(pub usize);
+
+/// Gold glow ring behind a seat's avatar, shown only on that seat's turn.
+#[derive(Component)]
+pub struct SeatRing(pub usize);
+
+/// Computes the design-space anchor for seat `seat`'s avatar cluster — sat above
+/// the seat's card block, scaled with the seat.
+fn avatar_anchor(seat: usize, layout: &Layout) -> Vec3 {
+    let (table_x, face_y, _is_bottom) = seat_anchor(seat, layout.orientation);
+    let scale = seat_scale(seat, layout.orientation);
+    Vec3::new(table_x, face_y + 120.0 * scale, 650.0)
+}
+
+/// Spawns one avatar per AI seat the first time the roster exists, then keeps
+/// every avatar parked above its seat and toggles the gold active-seat ring.
+#[allow(clippy::too_many_arguments)]
+fn manage_seat_avatars(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    layout: Res<Layout>,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut avatar_q: Query<(&SeatAvatar, &mut Transform)>,
+    mut ring_q: Query<(&SeatRing, &mut Visibility)>,
+) {
+    // One-time spawn once the players are seated.
+    if avatar_q.is_empty() && game_state.players.len() > 1 {
+        let ui_font = asset_server.load("fonts/Rubik-Regular.ttf");
+        let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
+        for seat in 1..game_state.players.len() {
+            let player = &game_state.players[seat];
+            let color = theme::seat_color(seat, player.personality);
+            let mono = player
+                .name
+                .chars()
+                .next()
+                .unwrap_or('?')
+                .to_uppercase()
+                .to_string();
+            let mood = theme::seat_mood(player.personality);
+            let scale = seat_scale(seat, layout.orientation);
+            let pos = avatar_anchor(seat, &layout);
+
+            commands
+                .spawn((
+                    SeatAvatar(seat),
+                    SpatialBundle {
+                        transform: Transform::from_translation(pos)
+                            .with_scale(Vec3::splat(scale)),
+                        ..default()
+                    },
+                ))
+                .with_children(|av| {
+                    // Gold active-seat ring (hidden until it's this seat's turn).
+                    av.spawn((
+                        SeatRing(seat),
+                        MaterialMesh2dBundle {
+                            mesh: Mesh2dHandle(meshes.add(Circle::new(AVATAR_RADIUS + 7.0))),
+                            material: materials.add(theme::GOLD),
+                            transform: Transform::from_xyz(0.0, 0.0, -0.3),
+                            visibility: Visibility::Hidden,
+                            ..default()
+                        },
+                    ));
+                    // White rim, seat-colour disc, monogram.
+                    av.spawn(MaterialMesh2dBundle {
+                        mesh: Mesh2dHandle(meshes.add(Circle::new(AVATAR_RADIUS + 3.0))),
+                        material: materials.add(Color::srgb(0.96, 0.96, 0.96)),
+                        transform: Transform::from_xyz(0.0, 0.0, -0.2),
+                        ..default()
+                    });
+                    av.spawn(MaterialMesh2dBundle {
+                        mesh: Mesh2dHandle(meshes.add(Circle::new(AVATAR_RADIUS))),
+                        material: materials.add(color),
+                        transform: Transform::from_xyz(0.0, 0.0, -0.1),
+                        ..default()
+                    });
+                    av.spawn(Text2dBundle {
+                        text: Text::from_section(
+                            mono,
+                            TextStyle { font: pixel_font.clone(), font_size: 20.0, color: Color::WHITE },
+                        ),
+                        transform: Transform::from_xyz(0.0, 0.0, 0.1),
+                        ..default()
+                    });
+                    // Name + mood tag, stacked below the disc.
+                    av.spawn(Text2dBundle {
+                        text: Text::from_section(
+                            player.name.clone(),
+                            TextStyle { font: ui_font.clone(), font_size: 15.0, color: Color::WHITE },
+                        ),
+                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 14.0, 0.1),
+                        ..default()
+                    });
+                    av.spawn(Text2dBundle {
+                        text: Text::from_section(
+                            mood,
+                            TextStyle { font: pixel_font.clone(), font_size: 9.0, color: theme::GOLD },
+                        ),
+                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 30.0, 0.1),
+                        ..default()
+                    });
+                });
+        }
+        return; // positions/ring handled next frame once entities exist
+    }
+
+    // Reposition every avatar above its seat (orientation may have flipped).
+    for (avatar, mut transform) in avatar_q.iter_mut() {
+        let scale = seat_scale(avatar.0, layout.orientation);
+        transform.translation = avatar_anchor(avatar.0, &layout);
+        transform.scale = Vec3::splat(scale);
+    }
+
+    // Light the gold ring on the active seat only.
+    let active_seat = game_state.current_player;
+    let playing = game_state.phase == GamePhase::Playing
+        && !game_state.finish_order.contains(&active_seat);
+    for (ring, mut vis) in ring_q.iter_mut() {
+        *vis = if playing && ring.0 == active_seat {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+// ── Pile-count badge ───────────────────────────────────────────────────────
+
+/// The magenta `×N` pill parked beside the play pile.
+#[derive(Component)]
+pub struct PileCountBadge;
+
+/// Marker on the badge's text child.
+#[derive(Component)]
+pub struct PileCountText;
+
+fn update_pile_badge(
+    game_state: Res<GameState>,
+    mut badge_q: Query<&mut Visibility, With<PileCountBadge>>,
+    mut text_q: Query<&mut Text, With<PileCountText>>,
+) {
+    let count = game_state.cards_in_play.len();
+    if let Ok(mut vis) = badge_q.get_single_mut() {
+        *vis = if count > 0 { Visibility::Visible } else { Visibility::Hidden };
+    }
+    if let Ok(mut text) = text_q.get_single_mut() {
+        let label = format!("\u{00D7}{}", count);
+        if text.sections[0].value != label {
+            text.sections[0].value = label;
+        }
+    }
+}
+
+// ── Juice: floating "+N" pops + burn flash ─────────────────────────────────
+
+/// A short-lived Text2d that drifts up and fades out (the "+N!" score pop).
+#[derive(Component)]
+pub struct FloatingText {
+    age: f32,
+    ttl: f32,
+}
+
+/// A short-lived flash sprite over the pile when it burns.
+#[derive(Component)]
+pub struct BurnFlash {
+    age: f32,
+    ttl: f32,
+}
+
+fn update_floating_text(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut Transform, &mut Text, &mut FloatingText)>,
+) {
+    for (entity, mut transform, mut text, mut float) in q.iter_mut() {
+        float.age += time.delta_seconds();
+        let frac = (float.age / float.ttl).clamp(0.0, 1.0);
+        transform.translation.y += 60.0 * time.delta_seconds();
+        let alpha = 1.0 - frac;
+        for section in text.sections.iter_mut() {
+            section.style.color = section.style.color.with_alpha(alpha);
+        }
+        if float.age >= float.ttl {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+}
+
+fn update_burn_flash(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut Sprite, &mut BurnFlash)>,
+) {
+    for (entity, mut sprite, mut flash) in q.iter_mut() {
+        flash.age += time.delta_seconds();
+        let frac = (flash.age / flash.ttl).clamp(0.0, 1.0);
+        sprite.color = sprite.color.with_alpha(0.7 * (1.0 - frac));
+        if flash.age >= flash.ttl {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+}
+
+/// Watches round state for two presentational events without touching gameplay:
+/// a new finisher (spawn a lime "+N!" pop at their seat) and the discard pile
+/// growing (a burn just happened — flash the pile). Tracked via `Local` so we
+/// only fire on the frame the count changes.
+fn detect_juice_events(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    layout: Res<Layout>,
+    reduced: Res<ReducedMotion>,
+    asset_server: Res<AssetServer>,
+    mut last_finished: Local<usize>,
+    mut last_discard: Local<usize>,
+) {
+    let finished = game_state.finish_order.len();
+    let discard = game_state.discard_pile.len();
+
+    // New round (counts reset) — resync without firing.
+    if finished < *last_finished {
+        *last_finished = finished;
+    }
+    if discard < *last_discard {
+        *last_discard = discard;
+    }
+
+    if !reduced.0 {
+        // One pop per newly-eliminated seat.
+        if finished > *last_finished {
+            let total = game_state.players.len();
+            let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
+            for pos in *last_finished..finished {
+                let seat = game_state.finish_order[pos];
+                let pts = MatchState::score_for_position(pos, total);
+                let label = if pts > 0 { format!("+{}!", pts) } else { "SHED!".to_string() };
+                let (table_x, face_y, _) = seat_anchor(seat, layout.orientation);
+                commands.spawn((
+                    FloatingText { age: 0.0, ttl: 0.75 },
+                    Text2dBundle {
+                        text: Text::from_section(
+                            label,
+                            TextStyle { font: pixel_font.clone(), font_size: 22.0, color: theme::LIME },
+                        ),
+                        transform: Transform::from_xyz(table_x, face_y, 660.0)
+                            .with_rotation(Quat::from_rotation_z((-8.0_f32).to_radians())),
+                        ..default()
+                    },
+                ));
+            }
+        }
+
+        // Pile burned (cards moved to discard).
+        if discard > *last_discard {
+            commands.spawn((
+                BurnFlash { age: 0.0, ttl: 0.35 },
+                SpriteBundle {
+                    sprite: Sprite {
+                        color: Color::srgba(1.0, 0.85, 0.4, 0.7),
+                        custom_size: Some(Vec2::new(CARD_WIDTH + 30.0, CARD_HEIGHT + 30.0)),
+                        ..default()
+                    },
+                    transform: Transform::from_xyz(PLAY_PILE_X, 0.0, 615.0),
+                    ..default()
+                },
+            ));
+        }
+    }
+
+    *last_finished = finished;
+    *last_discard = discard;
 }
 
 // Pulse the pickup highlight when the human player needs to pick up cards
