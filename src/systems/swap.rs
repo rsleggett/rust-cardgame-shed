@@ -7,6 +7,7 @@ use crate::components::card::Card;
 use crate::components::game::{GamePhase, GameState};
 use crate::game_plugin::PLAYER_COUNT;
 use crate::rendering::card_constants::{CARD_HEIGHT, CARD_WIDTH};
+use crate::systems::input::primary_pointer_press;
 
 /// Bottom-centre button visible only during the Swap phase. Click → human is
 /// done swapping. Shares the play button's slot via mutually exclusive
@@ -35,16 +36,14 @@ pub(crate) fn handle_swap_input(
     transforms: Query<&GlobalTransform>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
+    touches: Res<Touches>,
     button_q: Query<&Interaction, With<DoneSwapButton>>,
 ) {
     if game_state.phase != GamePhase::Swap || swap_state.human_done {
         return;
     }
-    if !mouse_button_input.just_pressed(MouseButton::Left) {
-        return;
-    }
     // The Done button overlaps the hand fan area; drop swap input when the
-    // cursor is over the button so a Done click can't also swap a card.
+    // pointer is over the button so a Done press can't also swap a card.
     if button_q
         .iter()
         .any(|i| matches!(i, Interaction::Pressed | Interaction::Hovered))
@@ -54,8 +53,8 @@ pub(crate) fn handle_swap_input(
 
     let (camera, camera_transform) = camera_q.single();
     let window = windows.single();
-    let Some(cursor_pos) = window.cursor_position() else { return; };
-    let Some(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else { return; };
+    let Some(pointer) = primary_pointer_press(&mouse_button_input, &touches, window) else { return; };
+    let Some(world_pos) = camera.viewport_to_world_2d(camera_transform, pointer) else { return; };
 
     let hand: Vec<Entity> = game_state.players[0].hand.clone();
     let face_up: Vec<Entity> = game_state.players[0].face_up_cards.clone();

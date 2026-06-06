@@ -152,13 +152,20 @@ pub(crate) fn restart_game_system(
     mut match_state: ResMut<MatchState>,
     mut swap_state: ResMut<SwapState>,
     keyboard: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    touches: Res<Touches>,
     card_q: Query<Entity, With<Card>>,
     screen_q: Query<Entity, With<GameOverScreen>>,
     status_q: Query<Entity, With<PileStatusText>>,
     asset_server: Res<AssetServer>,
 ) {
     if game_state.phase != GamePhase::GameOver { return; }
-    if keyboard.get_just_pressed().next().is_none() { return; }
+    // Any key, click, or tap advances — so the overlay is dismissable on a phone
+    // that has no keyboard.
+    let advance = keyboard.get_just_pressed().next().is_some()
+        || mouse.just_pressed(MouseButton::Left)
+        || touches.iter_just_pressed().next().is_some();
+    if !advance { return; }
 
     *swap_state = SwapState::default();
 

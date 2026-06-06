@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use crate::components::card::Card;
 use crate::components::game::{GamePhase, GameState};
 use crate::rendering::card_constants::PLAY_PILE_X;
-use crate::rendering::card_renderer::CardAnimation;
+use crate::rendering::card_renderer::{CardAnimation, Layout};
 
 /// Seconds between dealing each card during round setup. 36 cards × this value
 /// is the total deal time.
@@ -26,11 +26,10 @@ pub(crate) fn deal_cards_system(
     time: Res<Time>,
     mut deal_timer: ResMut<DealTimer>,
     cards: Query<&Card>,
-    windows: Query<&Window>,
+    layout: Res<Layout>,
 ) {
     if game_state.dealing_in_progress && deal_timer.0.tick(time.delta()).just_finished() {
-        let window_height = windows.single().height();
-        game_state.deal_next_card(&mut commands, &cards, window_height);
+        game_state.deal_next_card(&mut commands, &cards, &layout);
     }
 }
 

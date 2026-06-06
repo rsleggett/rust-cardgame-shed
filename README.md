@@ -71,9 +71,13 @@ The web build ships silent (no bundled music track). See
 [.github/workflows/deploy-web.yml](.github/workflows/deploy-web.yml) for the deploy
 pipeline.
 
-It also works on phones: the camera auto-fits the table to any screen size and
-orientation, and the rules panel is hidden on narrow screens to avoid overflow.
-Landscape fills the screen best; portrait shows the full table as a centred band.
+It also works on phones, in both orientations and by touch. The layout is
+orientation-aware: landscape keeps the desktop table, while portrait packs the
+three AIs into a compact strip across the top and gives the bottom of the screen
+to your hand and the pile at a large, readable scale. The rules panel is hidden
+on narrow screens to avoid overflow, and an active-seat glow shows whose turn it
+is. Staging cards, picking up the pile, swapping, and continuing past Game Over
+all work by tap as well as mouse/keyboard.
 
 ## Controls
 
@@ -120,11 +124,10 @@ Landscape fills the screen best; portrait shows the full table as a centred band
 
 ### UI / Polish
 1. **Pile size indicator** — count badge or fanned ghost cards.
-2. **Active-seat highlight** — show whose turn it is.
-3. **Big Hand layout fix** — hand fan currently overlaps the 4th card.
-4. **Smarter Game Over key handling** — ignore M / P so consumable hotkeys don't double as advance-round.
-5. **Settings** — AI count, AI speed, match target, optional rule variants.
-6. **Deeper mobile polish** — width-scaled HUD/buttons, a tighter portrait layout, and an on-demand rules toggle for phones (the camera already auto-fits and the rules panel hides on narrow screens).
+2. **Big Hand layout fix** — hand fan currently overlaps the 4th card.
+3. **Smarter Game Over key handling** — ignore M / P so consumable hotkeys don't double as advance-round.
+4. **Settings** — AI count, AI speed, match target, optional rule variants.
+5. **Deeper mobile polish** — width-scaled HUD/buttons, on-screen buttons for the keyboard-only actions (M / P / Enter / Escape) so phones can use consumables, and an on-demand rules toggle. (The layout is already orientation-aware with a portrait seat strip, an active-seat glow, and full touch support; tap-tuning the portrait anchors is ongoing.)
 
 ### Quality
 The suite currently stands at **61 tests** — 28 inline unit tests over the pure logic in `src/rules.rs` and `src/components/game.rs`, plus 33 integration tests in `tests/` driving real Bevy `App`s. Still uncovered:
