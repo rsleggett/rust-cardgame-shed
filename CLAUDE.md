@@ -4,6 +4,14 @@
 
 A Rust implementation of the card game **Shed** using the [Bevy](https://bevyengine.org/) ECS game engine (v0.14.2). One human player vs three AI opponents at a 4-seat table. The game plays in **matches** of multiple **rounds**: each round a buff is drafted, scores tick up by finish position, and the first player to the match target wins. Match runs are persistent (buffs stack across rounds Balatro-style); a new match resets everything.
 
+## Roadmap / Phases
+
+The visual + meta direction comes from the "Arcade Felt" design handoff (a Balatro-flavoured look plus an "Ante Ladder" meta-hook). It rolls out in phases:
+
+- **Phase 1 — Arcade Felt reskin (done):** restyle the existing game in place. Warm-paper cards with neon special badges + glow rings; dark-felt table with a gold inset frame; Rubik (UI/ranks) + Silkscreen (HUD/pixel) typography; chunky buttons; seat avatars + mood tags + active-seat ring; arcade juice (score pops, burn flash, button depress); pile-count badge. Pragmatic sprite approximation only — **no custom WGSL shaders**. Palette/helpers centralised in [`src/theme.rs`](src/theme.rs). No gameplay/rules/AI/state-machine changes.
+- **Phase 2 — Title / main-menu screen (planned):** a dedicated start screen before the table (play, settings incl. reduced-motion, etc.).
+- **Phase 3 — Ante Ladder meta-system (planned):** antes, stakes, and hazards layered over the match loop (per the handoff's `AnteSpecA`), with HUD wording shifting from "Round/First to N" to ante/stake labels.
+
 ## Build & Run
 
 ```bash
@@ -61,16 +69,20 @@ src/
   game_plugin.rs                 # GamePlugin: resource registration, system wiring, setup_game
   audio.rs                       # BackgroundMusic, MusicMuted, setup_music, Ctrl+M toggle
   rules.rs                       # Pure predicates: can_play_card, is_burn (+ unit tests)
+  theme.rs                       # "Arcade Felt" palette + helpers (single source of visual truth)
   ai.rs                          # Per-personality AI strategy (Rob / Mike / Dave)
   components/
     mod.rs
     card.rs                      # Card component, Suit, Rank
     card_visual.rs               # CardBundle, spawn_card_complete, update_card_visuals
+                                 # (warm-paper faces, neon special badges + glow rings, neon back)
     game.rs                      # GameState + Player; MatchState; Personality;
                                  # BuffKind, ActiveBuff; dealing logic (+ unit tests)
   rendering/
     mod.rs
-    card_renderer.rs             # CardRendererPlugin, CardAnimation, layout_cards
+    card_renderer.rs             # CardRendererPlugin, CardAnimation, layout_cards; felt
+                                 # background + gold rim, seat avatars + mood tags +
+                                 # active-seat ring, pile-count badge, score-pop / burn-flash juice
     card_constants.rs            # Sizes, z-step, play-pile x, hand fan params
   systems/
     mod.rs
@@ -100,8 +112,10 @@ tests/
   phase_transitions.rs           # advance_swap_phase + check_valid_plays_system
   has_valid_play.rs              # Source-priority predicate + face-down phase
 assets/fonts/
-  NotoSans-Regular.ttf           # Rank text
-  NotoSansSymbols2-Regular.ttf   # Suit glyphs (♥♦♣♠)
+  Rubik-Regular.ttf              # Card ranks + UI body text
+  Silkscreen-Regular.ttf         # Pixel/HUD headers, tags, turn prompt, badges
+  NotoSansSymbols2-Regular.ttf   # Suit glyphs (♥♦♣♠ — Rubik lacks these)
+  NotoSans-Regular.ttf           # Legacy fallback (no longer referenced)
 ```
 
 ## Key Architecture Notes
@@ -114,7 +128,8 @@ assets/fonts/
 - **Z-index layers** ([card_constants.rs](src/rendering/card_constants.rs)):
   - Face-down table cards: 0–2 | Face-up table cards: 100–102 | Hand: 200–202
   - Draw pile: ~400 (descending) | Pickup highlight: 490 | Play pile: 500+ | Discard pile: 450– | Pile-status text: 600
-- **Suit rendering**: real Unicode symbols (♥♦♣♠) rendered with `NotoSansSymbols2-Regular.ttf` — rank uses `NotoSans-Regular.ttf`. Two separate `Text2dBundle` children per card so each glyph uses the right font.
+- **Visual style ("Arcade Felt")**: a Balatro-flavoured reskin layered onto the existing sprite/`bevy_ui` architecture — no custom shaders. All palette colours and visual helpers live in [`src/theme.rs`](src/theme.rs) (`FELT_*`, `MAGENTA/CYAN/GOLD/LIME/PURPLE`, `CARD_PAPER/CARD_RED`, plus `special_color`, `special_badge`, `seat_color`, `seat_mood`, `chunky_shadow`, `Rarity`/`buff_rarity`/`buff_icon`). Cards are warm paper with neon special badges (2=RESET cyan, 3=GHOST grey, 7=UNDER amber, 10=BURN red) and a glow ring on *playable* specials; the table is a felt base + gold inset frame; chunky buttons fake a drop-shadow with a thick bottom border + `Outline` and depress on press. Deferred fidelity gaps (need shaders/textures): true radial felt gradient, rounded card corners, the card-back lattice.
+- **Suit rendering**: real Unicode symbols (♥♦♣♠) rendered with `NotoSansSymbols2-Regular.ttf`; ranks use `Rubik-Regular.ttf`. Two separate `Text2dBundle` children per card so each glyph uses the right font. HUD/headers/tags/turn-prompt use the pixel font `Silkscreen-Regular.ttf`.
 - **Table layout**: human at bottom centre; three AIs spaced across the top. Hands are fanned (rotated, arced) at the near window edge. Face-down cards sit further from the play pile, face-up closer.
 - **Play pile** is anchored at `PLAY_PILE_X = 150.0`. Only the top *finished-animating* card shows its rank/suit text (`show_text`); the rest are face-up but hidden so the stack reads cleanly.
 - **Responsive sizing**: the table is laid out in a design-space rect held by the `Layout` resource ([card_renderer.rs](src/rendering/card_renderer.rs)), and the 2D camera's `ScalingMode::AutoMin { min_width, min_height }` maps that rect onto any canvas (scales down, never clips; 1:1 on a 1440-wide desktop). `update_layout` flips orientation when the window turns portrait (`height > width`): **Landscape** uses the original 1440×900 rect, **Portrait** a 720×1280 rect. The portrait seat anchors (`seat_anchor`) pack the three AIs into a compact top strip — rendered at a reduced `seat_scale` so three seats fit the narrow width — while the human stays full-size and low, so the hand + pile own the roomy bottom. Every layout helper (`card_resting_transform`, `layout_cards`, `deal_next_card`, the refill in `play.rs`) reads `Layout`/`design_height` rather than live window pixels, so positions don't drift with the AutoMin scale. Screen-space UI panels *don't* scale with the camera, so `apply_responsive_layout` ([ui/responsive.rs](src/ui/responsive.rs)) hides the bottom-left rules panel below a 760px window width. An `update_turn_chip` system parks a "whose turn" poker chip (a solid disc, deliberately distinct from the pulsing pickup highlight) just below the active seat's cards; its label reads "Your turn" for the human and the AI's name otherwise. In portrait the human hand is lifted clear of the bottom-centre Play/Done button so the two don't overlap on a phone, and the draft overlay's perk rows are width-responsive (`Val::Percent` capped by `max_width`) so they fit a narrow screen.
@@ -229,7 +244,7 @@ Pool generation excludes buffs the player already has. Consumables refresh each 
 ## Known Gaps / Future Work
 
 - **Jack, Queen, Ace** still have no special behaviour (treated as normal high cards). Only the King has anything via the optional Wild Kings buff.
-- **Animation polish** — pickup currently teleports cards back to the hand; burn cards teleport to discard; draft picks have no fanfare; pile size has no visual indicator. This is the next iteration focus.
+- **Animation polish** — Phase 1 added the active-seat ring, pile-count badge, a "+N!" score pop on elimination, and a burn flash over the pile. Still teleporting: pickup (cards snap back to the hand) and burn cards (snap to discard); draft picks still have no fanfare.
 - **AI draft picks are random** — personality-aware buff preferences (Mike hoards consumables, Dave picks chaotically) are a follow-up.
 - **AI doesn't display its picks** during draft — the overlay only shows the human's options.
 - **Big Hand visual gap** — AI hands rendering only allocates space for 3 cards; with Big Hand the 4th may overlap a sibling.

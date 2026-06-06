@@ -195,7 +195,8 @@ pub fn play_selection(
         game_state.seven_active = false;
         game_state.any_card_playable = false;
         game_state.effective_rank = None;
-        game_state.discard_pile.extend(game_state.cards_in_play.drain(..));
+        let cards = std::mem::take(&mut game_state.cards_in_play);
+        game_state.discard_pile.extend(cards);
         game_state.current_card = None;
         info!("{:?} burned the pile (4-of-a-kind or 10), player {} goes again", rank, playing_player);
         if game_state.check_and_eliminate(playing_player) {

@@ -39,7 +39,8 @@ Built on the Bevy ECS (Entity Component System) game engine. The game features:
 - `src/lib.rs` — re-exports modules so the integration tests can drive them
 - `src/main.rs` — application entry point (1440×900 window)
 - `tests/` — integration tests driving real Bevy `App`s
-- `scripts/download-fonts.sh` — fetches the font assets (not tracked in git)
+- `src/theme.rs` — "Arcade Felt" palette + visual helpers (single source of style truth)
+- `scripts/download-fonts.sh` — fetches the font assets (Rubik, Silkscreen, Noto suit glyphs; not tracked in git)
 - `scripts/download-music.sh` — sets up `assets/music/` and prints CC0 track sources (optional)
 
 See [CLAUDE.md](CLAUDE.md) for an architecture overview and [DEVELOPMENT.md](DEVELOPMENT.md) for design notes, per-phase decisions, and outstanding work.
@@ -47,7 +48,7 @@ See [CLAUDE.md](CLAUDE.md) for an architecture overview and [DEVELOPMENT.md](DEV
 ## How to Run
 
 ```bash
-./scripts/download-fonts.sh   # one-time: fetch fonts into assets/fonts/
+./scripts/download-fonts.sh   # one-time: fetch Rubik + Silkscreen + Noto suit fonts into assets/fonts/
 ./scripts/download-music.sh   # optional: set up assets/music/ for background music
 cargo run
 cargo test                    # run the unit + integration test suite
@@ -108,10 +109,18 @@ mouse/keyboard.
 5. **Game Over screen** — finish order, points awarded this round, cumulative scores, continue prompt.
 6. Repeat. First player to 10 cumulative points wins the match. New match resets buffs and personas; next round keeps them.
 
+## Roadmap
+
+The game's look and meta direction come from the "Arcade Felt" design handoff (a Balatro-flavoured style plus a future "Ante Ladder" meta-hook), rolled out in phases:
+
+- **Phase 1 — Arcade Felt reskin (done):** warm-paper cards with neon special badges + glow rings, a dark-felt table with a gold inset frame, Rubik + Silkscreen typography, chunky buttons, seat avatars with mood tags + an active-seat ring, arcade juice (score pops, burn flash, button depress), and a pile-count badge. Pure presentation — no gameplay changes — built with sprites/`bevy_ui` (no custom shaders). Palette lives in `src/theme.rs`.
+- **Phase 2 — Title / main-menu screen (planned):** a dedicated start screen with play + settings (including reduced-motion).
+- **Phase 3 — Ante Ladder meta-system (planned):** antes, stakes, and hazards layered over the match loop.
+
 ## Future Improvements
 
 ### Next iteration focus
-1. **Animation polish** — animate pile pickups, burns, and draft picks; add an active-seat indicator; show pile size visually.
+1. **Animation polish** — Phase 1 added the active-seat ring, the pile-count badge, score pops, and a burn flash; still to animate: pile pickups (currently teleport) and draft-pick fanfare.
 2. **Core gameplay loop** — finish the special-card set (J, Q, A still vanilla), add persona-aware AI draft picks, expand the buff catalogue, surface what each AI drafted at round-end.
 
 ### Gameplay

@@ -8,9 +8,16 @@ use crate::components::card::Card;
 use crate::components::game::{GamePhase, GameState, MatchState};
 use crate::game_plugin::{add_match_players, MATCH_TARGET, PLAYER_COUNT};
 use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X};
+use crate::rendering::card_renderer::SeatAvatar;
 use crate::systems::swap::SwapState;
+use crate::theme;
 use crate::ui::pile_status::PileStatusText;
 use crate::ui::score_hud::{ordinal, player_display_name};
+
+/// First letter of a display name, for the row avatar monogram.
+fn monogram(name: &str) -> String {
+    name.chars().next().unwrap_or('?').to_uppercase().to_string()
+}
 
 #[derive(Component)]
 pub(crate) struct GameOverScreen;
@@ -66,7 +73,14 @@ pub(crate) fn game_over_screen_system(
         "Press any key for the next round"
     };
 
-    let font = asset_server.load("fonts/NotoSans-Regular.ttf");
+    let ui_font = asset_server.load("fonts/Rubik-Regular.ttf");
+    let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
+
+    let title_color = if matches!(human_position, Some(0)) || match_state.match_winner == Some(0) {
+        theme::GOLD
+    } else {
+        theme::MAGENTA
+    };
 
     commands.spawn((
         GameOverScreen,
@@ -78,70 +92,202 @@ pub(crate) fn game_over_screen_system(
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(10.0),
+                row_gap: Val::Px(8.0),
                 ..default()
             },
-            background_color: Color::srgba(0.0, 0.0, 0.0, 0.6).into(),
+            background_color: theme::VEIL.into(),
             ..default()
         },
     )).with_children(|parent| {
         parent.spawn(TextBundle::from_section(
             title,
-            TextStyle {
-                font: font.clone(),
-                font_size: 64.0,
-                color: Color::WHITE,
-            },
+            TextStyle { font: pixel_font.clone(), font_size: 48.0, color: title_color },
         ));
 
         parent.spawn(TextBundle::from_section(
             subtitle,
-            TextStyle {
-                font: font.clone(),
-                font_size: 18.0,
-                color: Color::srgba(1.0, 1.0, 1.0, 0.75),
-            },
+            TextStyle { font: ui_font.clone(), font_size: 16.0, color: theme::MUTED_TEXT },
         ));
 
-        for (rank_idx, &player_idx) in game_state.finish_order.iter().enumerate() {
-            let label = if rank_idx + 1 == total {
-                "Shed".to_string()
-            } else {
-                ordinal(rank_idx + 1)
-            };
-            let name = player_display_name(&game_state, player_idx);
-            let cumulative = match_state.scores.get(player_idx).copied().unwrap_or(0);
-            let gained = MatchState::score_for_position(rank_idx, total);
-            let line_color = if player_idx == 0 {
-                Color::srgb(1.0, 0.85, 0.3)
-            } else {
-                Color::srgba(1.0, 1.0, 1.0, 0.85)
-            };
-            parent.spawn(TextBundle::from_section(
-                format!("{} — {}   +{}   ({} total)", label, name, gained, cumulative),
-                TextStyle {
-                    font: font.clone(),
-                    font_size: 26.0,
-                    color: line_color,
+        // Finish-order rows inside a felt panel.
+        parent
+            .spawn(NodeBundle {
+                style: Style {
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(14.0)),
+                    margin: UiRect::vertical(Val::Px(10.0)),
+                    row_gap: Val::Px(6.0),
+                    min_width: Val::Px(360.0),
+                    border: UiRect::all(Val::Px(1.5)),
+                    ..default()
                 },
-            ));
-        }
-
-        parent.spawn(TextBundle {
-            text: Text::from_section(
-                cta,
-                TextStyle {
-                    font,
-                    font_size: 22.0,
-                    color: Color::srgba(1.0, 1.0, 1.0, 0.7),
-                },
-            ),
-            style: Style {
-                margin: UiRect::top(Val::Px(16.0)),
+                background_color: theme::PANEL.into(),
+                border_color: theme::GOLD.with_alpha(0.35).into(),
+                border_radius: BorderRadius::all(Val::Px(10.0)),
                 ..default()
-            },
-            ..default()
-        });
+            })
+            .with_children(|panel| {
+                let max_score = match_state.scores.iter().copied().max().unwrap_or(0).max(match_state.target);
+                for (rank_idx, &player_idx) in game_state.finish_order.iter().enumerate() {
+                    let is_shed = rank_idx + 1 == total;
+                    let label = if is_shed { "Shed".to_string() } else { ordinal(rank_idx + 1) };
+                    let name = player_display_name(&game_state, player_idx);
+                    let cumulative = match_state.scores.get(player_idx).copied().unwrap_or(0);
+                    let gained = MatchState::score_for_position(rank_idx, total);
+                    let seat = game_state
+                        .players
+                        .get(player_idx)
+                        .map(|p| theme::seat_color(player_idx, p.personality))
+                        .unwrap_or(theme::MUTED_TEXT);
+                    let row_bg = if rank_idx == 0 {
+                        theme::GOLD.with_alpha(0.12)
+                    } else {
+                        Color::srgba(1.0, 1.0, 1.0, 0.03)
+                    };
+
+                    panel
+                        .spawn(NodeBundle {
+                            style: Style {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(10.0),
+                                padding: UiRect::all(Val::Px(6.0)),
+                                ..default()
+                            },
+                            background_color: row_bg.into(),
+                            border_radius: BorderRadius::all(Val::Px(6.0)),
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            // Position label (seat-coloured pixel font).
+                            row.spawn(TextBundle {
+                                text: Text::from_section(
+                                    label,
+                                    TextStyle { font: pixel_font.clone(), font_size: 13.0, color: seat },
+                                ),
+                                style: Style { min_width: Val::Px(46.0), ..default() },
+                                ..default()
+                            });
+
+                            // Avatar monogram chip.
+                            row.spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Px(28.0),
+                                    height: Val::Px(28.0),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    ..default()
+                                },
+                                background_color: seat.with_alpha(0.30).into(),
+                                border_radius: BorderRadius::all(Val::Px(14.0)),
+                                ..default()
+                            })
+                            .with_children(|av| {
+                                av.spawn(TextBundle::from_section(
+                                    monogram(&name),
+                                    TextStyle { font: pixel_font.clone(), font_size: 12.0, color: seat },
+                                ));
+                            });
+
+                            // Name.
+                            row.spawn(TextBundle {
+                                text: Text::from_section(
+                                    name,
+                                    TextStyle { font: ui_font.clone(), font_size: 18.0, color: Color::WHITE },
+                                ),
+                                style: Style { min_width: Val::Px(90.0), ..default() },
+                                ..default()
+                            });
+
+                            // "THE SHED" tag for the last-place finisher.
+                            if is_shed {
+                                row.spawn(NodeBundle {
+                                    style: Style {
+                                        padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                                        ..default()
+                                    },
+                                    background_color: theme::MAGENTA.into(),
+                                    border_radius: BorderRadius::all(Val::Px(5.0)),
+                                    ..default()
+                                })
+                                .with_children(|tag| {
+                                    tag.spawn(TextBundle::from_section(
+                                        "THE SHED",
+                                        TextStyle { font: pixel_font.clone(), font_size: 9.0, color: Color::WHITE },
+                                    ));
+                                });
+                            }
+
+                            // Points this round.
+                            let gained_color = if gained > 0 { theme::LIME } else { theme::MUTED_TEXT };
+                            row.spawn(TextBundle {
+                                text: Text::from_section(
+                                    format!("+{}", gained),
+                                    TextStyle { font: pixel_font.clone(), font_size: 13.0, color: gained_color },
+                                ),
+                                style: Style {
+                                    min_width: Val::Px(36.0),
+                                    margin: UiRect::left(Val::Auto),
+                                    ..default()
+                                },
+                                ..default()
+                            });
+
+                            // Run-total bar (track + cyan→gold fill) plus the numeral.
+                            row.spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Px(80.0),
+                                    height: Val::Px(10.0),
+                                    ..default()
+                                },
+                                background_color: Color::srgba(1.0, 1.0, 1.0, 0.10).into(),
+                                border_radius: BorderRadius::all(Val::Px(5.0)),
+                                ..default()
+                            })
+                            .with_children(|track| {
+                                let frac = (cumulative as f32 / max_score as f32).clamp(0.0, 1.0);
+                                let fill = if cumulative >= match_state.target { theme::GOLD } else { theme::CYAN };
+                                track.spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Percent(frac * 100.0),
+                                        height: Val::Percent(100.0),
+                                        ..default()
+                                    },
+                                    background_color: fill.into(),
+                                    border_radius: BorderRadius::all(Val::Px(5.0)),
+                                    ..default()
+                                });
+                            });
+                            row.spawn(TextBundle::from_section(
+                                format!("{}", cumulative),
+                                TextStyle { font: pixel_font.clone(), font_size: 13.0, color: theme::GOLD },
+                            ));
+                        });
+                }
+            });
+
+        // Chunky CTA prompt (lime fill, dark bottom edge).
+        parent
+            .spawn(NodeBundle {
+                style: Style {
+                    margin: UiRect::top(Val::Px(10.0)),
+                    padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+                    border: UiRect::bottom(Val::Px(5.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                background_color: theme::LIME.into(),
+                border_color: theme::chunky_shadow(theme::LIME).into(),
+                border_radius: BorderRadius::all(Val::Px(12.0)),
+                ..default()
+            })
+            .with_children(|btn| {
+                btn.spawn(TextBundle::from_section(
+                    cta,
+                    TextStyle { font: ui_font, font_size: 16.0, color: Color::srgb(0.10, 0.06, 0.10) },
+                ));
+            });
     });
 }
 
@@ -157,6 +303,7 @@ pub(crate) fn restart_game_system(
     card_q: Query<Entity, With<Card>>,
     screen_q: Query<Entity, With<GameOverScreen>>,
     status_q: Query<Entity, With<PileStatusText>>,
+    avatar_q: Query<Entity, With<SeatAvatar>>,
     asset_server: Res<AssetServer>,
 ) {
     if game_state.phase != GamePhase::GameOver { return; }
@@ -183,6 +330,9 @@ pub(crate) fn restart_game_system(
     // correct personas (a fresh roster on new-match, the same as before
     // on next-round).
     if match_was_over {
+        // Seat avatars cache each AI's name/colour/mood, so a fresh roster
+        // needs them rebuilt — despawn so manage_seat_avatars respawns them.
+        for e in avatar_q.iter() { commands.entity(e).despawn_recursive(); }
         *match_state = MatchState::new(PLAYER_COUNT, MATCH_TARGET);
         info!("Match reset — new opponents drawn");
     } else {
@@ -199,16 +349,17 @@ pub(crate) fn restart_game_system(
         game_state.current_player = dealer.min(PLAYER_COUNT.saturating_sub(1));
     }
 
-    let font = asset_server.load("fonts/NotoSans-Regular.ttf");
+    let ui_font = asset_server.load("fonts/Rubik-Regular.ttf");
     let suit_font = asset_server.load("fonts/NotoSansSymbols2-Regular.ttf");
-    game_state.prepare_dealing(&mut commands, font.clone(), suit_font);
+    let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
+    game_state.prepare_dealing(&mut commands, ui_font, suit_font, pixel_font.clone());
 
     commands.spawn((
         PileStatusText,
         Text2dBundle {
             text: Text::from_section(
                 "",
-                TextStyle { font, font_size: 16.0, color: Color::WHITE },
+                TextStyle { font: pixel_font, font_size: 16.0, color: theme::GOLD },
             ),
             transform: Transform::from_xyz(PLAY_PILE_X, CARD_HEIGHT / 2.0 + 24.0, 600.0),
             ..default()

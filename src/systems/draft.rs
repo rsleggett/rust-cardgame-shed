@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use crate::components::game::{
     ActiveBuff, BuffKind, GamePhase, GameState, MatchState,
 };
+use crate::theme;
 
 /// Marker on the full-screen draft overlay (one per round).
 #[derive(Component)]
@@ -139,15 +140,16 @@ pub(crate) fn draft_screen_system(
         return; // nothing to choose — apply_picks will fill it automatically next frame
     }
 
-    let font = asset_server.load("fonts/NotoSans-Regular.ttf");
-    let header = if human_pool.len() >= 5 {
+    let ui_font = asset_server.load("fonts/Rubik-Regular.ttf");
+    let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
+    let subtitle = if human_pool.len() >= 5 {
         format!(
-            "Round {} · Shed bonus — pick 1 of {}",
+            "Round {} \u{00B7} Shed bonus \u{2014} pick 1 of {}",
             match_state.round,
             human_pool.len()
         )
     } else {
-        format!("Round {} · Pick a perk", match_state.round)
+        format!("Round {} \u{00B7} click a perk to add it to your run", match_state.round)
     };
 
     commands
@@ -164,34 +166,22 @@ pub(crate) fn draft_screen_system(
                     row_gap: Val::Px(10.0),
                     ..default()
                 },
-                background_color: Color::srgba(0.0, 0.0, 0.0, 0.7).into(),
+                background_color: theme::VEIL.into(),
                 ..default()
             },
         ))
         .with_children(|parent| {
             parent.spawn(
                 TextBundle::from_section(
-                    header,
-                    TextStyle {
-                        font: font.clone(),
-                        font_size: 36.0,
-                        color: Color::WHITE,
-                    },
+                    "PICK A PERK",
+                    TextStyle { font: pixel_font.clone(), font_size: 34.0, color: theme::MAGENTA },
                 )
-                .with_text_justify(JustifyText::Center)
-                .with_style(Style {
-                    max_width: Val::Percent(90.0),
-                    ..default()
-                }),
+                .with_text_justify(JustifyText::Center),
             );
             parent.spawn(TextBundle {
                 text: Text::from_section(
-                    "Click a perk to add it to your run",
-                    TextStyle {
-                        font: font.clone(),
-                        font_size: 14.0,
-                        color: Color::srgba(1.0, 1.0, 1.0, 0.6),
-                    },
+                    subtitle,
+                    TextStyle { font: ui_font.clone(), font_size: 14.0, color: theme::MUTED_TEXT },
                 ),
                 style: Style {
                     margin: UiRect::bottom(Val::Px(8.0)),
@@ -201,6 +191,8 @@ pub(crate) fn draft_screen_system(
             });
 
             for &kind in &human_pool {
+                let rarity = theme::buff_rarity(kind);
+                let rcolor = rarity.color();
                 parent
                     .spawn((
                         DraftOption(kind),
@@ -211,38 +203,72 @@ pub(crate) fn draft_screen_system(
                                 // the rows don't sprawl on a wide screen.
                                 width: Val::Percent(90.0),
                                 max_width: Val::Px(460.0),
-                                padding: UiRect::all(Val::Px(12.0)),
-                                flex_direction: FlexDirection::Column,
-                                row_gap: Val::Px(4.0),
-                                align_items: AlignItems::FlexStart,
+                                padding: UiRect::all(Val::Px(10.0)),
+                                column_gap: Val::Px(12.0),
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(2.0)),
                                 ..default()
                             },
-                            background_color: Color::srgba(0.15, 0.15, 0.18, 0.95).into(),
+                            background_color: theme::PANEL.into(),
+                            border_color: rcolor.into(),
+                            border_radius: BorderRadius::all(Val::Px(10.0)),
                             ..default()
                         },
                     ))
                     .with_children(|row| {
-                        let name = if kind.is_consumable() {
-                            format!("{}  (consumable)", kind.display_name())
-                        } else {
-                            kind.display_name().to_string()
-                        };
-                        row.spawn(TextBundle::from_section(
-                            name,
-                            TextStyle {
-                                font: font.clone(),
-                                font_size: 20.0,
-                                color: Color::srgb(1.0, 0.9, 0.4),
+                        // Icon chip (rarity-tinted square with the buff glyph).
+                        row.spawn(NodeBundle {
+                            style: Style {
+                                width: Val::Px(50.0),
+                                height: Val::Px(50.0),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                ..default()
                             },
-                        ));
-                        row.spawn(TextBundle::from_section(
-                            kind.description(),
-                            TextStyle {
-                                font: font.clone(),
-                                font_size: 14.0,
-                                color: Color::srgba(1.0, 1.0, 1.0, 0.85),
+                            background_color: rcolor.with_alpha(0.20).into(),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
+                            ..default()
+                        })
+                        .with_children(|chip| {
+                            chip.spawn(TextBundle::from_section(
+                                theme::buff_icon(kind),
+                                TextStyle { font: pixel_font.clone(), font_size: 18.0, color: rcolor },
+                            ));
+                        });
+
+                        // Text column: name + rarity tag, then the blurb.
+                        row.spawn(NodeBundle {
+                            style: Style {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(3.0),
+                                ..default()
                             },
-                        ));
+                            ..default()
+                        })
+                        .with_children(|col| {
+                            let name = if kind.is_consumable() {
+                                format!("{}  (consumable)", kind.display_name())
+                            } else {
+                                kind.display_name().to_string()
+                            };
+                            col.spawn(TextBundle::from_section(
+                                name,
+                                TextStyle { font: ui_font.clone(), font_size: 19.0, color: Color::WHITE },
+                            ));
+                            col.spawn(TextBundle::from_section(
+                                rarity.label(),
+                                TextStyle { font: pixel_font.clone(), font_size: 9.0, color: rcolor },
+                            ));
+                            col.spawn(TextBundle::from_section(
+                                kind.description(),
+                                TextStyle {
+                                    font: ui_font.clone(),
+                                    font_size: 13.0,
+                                    color: Color::srgba(1.0, 1.0, 1.0, 0.80),
+                                },
+                            ));
+                        });
                     });
             }
         });
@@ -272,10 +298,10 @@ pub(crate) fn handle_draft_click(
                     draft_state.picks[0] = Some(option.0);
                     info!("You picked buff: {}", option.0.display_name());
                 }
-                *bg = Color::srgba(0.30, 0.55, 0.30, 0.98).into();
+                *bg = theme::LIME.with_alpha(0.22).into();
             }
-            Interaction::Hovered => *bg = Color::srgba(0.25, 0.25, 0.30, 0.98).into(),
-            Interaction::None => *bg = Color::srgba(0.15, 0.15, 0.18, 0.95).into(),
+            Interaction::Hovered => *bg = Color::srgba(1.0, 1.0, 1.0, 0.08).into(),
+            Interaction::None => *bg = theme::PANEL.into(),
         }
     }
 }

@@ -379,7 +379,7 @@ impl GameState {
         }
     }
 
-    pub fn prepare_dealing(&mut self, commands: &mut Commands, font: Handle<Font>, suit_font: Handle<Font>) {
+    pub fn prepare_dealing(&mut self, commands: &mut Commands, font: Handle<Font>, suit_font: Handle<Font>, pixel_font: Handle<Font>) {
         // Create a standard deck of 52 cards
         let mut deck = Vec::new();
         for suit in [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades] {
@@ -403,7 +403,7 @@ impl GameState {
         
         // First, spawn all cards in the center
         for card in deck {
-            let card_entity = spawn_card_complete(commands, card, center_position, font.clone(), suit_font.clone());
+            let card_entity = spawn_card_complete(commands, card, center_position, font.clone(), suit_font.clone(), pixel_font.clone());
             self.draw_pile.push(card_entity);
         }
         

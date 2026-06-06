@@ -12,6 +12,10 @@ mkdir -p "$FONT_DIR"
 FONTS=(
   "NotoSans|https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf|NotoSans-Regular.ttf"
   "NotoSansSymbols2|https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssymbols2/NotoSansSymbols2-Regular.ttf|NotoSansSymbols2-Regular.ttf"
+  # Arcade Felt skin: Rubik (UI / card ranks) + Silkscreen (pixel HUD numerals).
+  # Rubik is shipped as a variable font; Bevy renders its default axis fine.
+  "Rubik|https://raw.githubusercontent.com/google/fonts/main/ofl/rubik/Rubik%5Bwght%5D.ttf|Rubik-Regular.ttf"
+  "Silkscreen|https://raw.githubusercontent.com/google/fonts/main/ofl/silkscreen/Silkscreen-Regular.ttf|Silkscreen-Regular.ttf"
 )
 
 for entry in "${FONTS[@]}"; do
