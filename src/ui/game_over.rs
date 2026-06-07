@@ -95,7 +95,9 @@ pub(crate) fn game_over_screen_system(
                 row_gap: Val::Px(8.0),
                 ..default()
             },
-            background_color: theme::VEIL.into(),
+            // Darker backdrop than the standard veil so the scoreboard pops and
+            // the busy table behind it recedes.
+            background_color: Color::srgba(0.02, 0.071, 0.047, 0.92).into(),
             ..default()
         },
     )).with_children(|parent| {
@@ -121,8 +123,10 @@ pub(crate) fn game_over_screen_system(
                     border: UiRect::all(Val::Px(1.5)),
                     ..default()
                 },
-                background_color: theme::PANEL.into(),
-                border_color: theme::GOLD.with_alpha(0.35).into(),
+                // Near-opaque felt panel so the score rows read clearly over the
+                // table cards behind the veil (PANEL alone was too transparent).
+                background_color: Color::srgb(0.024, 0.094, 0.063).into(),
+                border_color: theme::GOLD.with_alpha(0.45).into(),
                 border_radius: BorderRadius::all(Val::Px(10.0)),
                 ..default()
             })
@@ -359,7 +363,7 @@ pub(crate) fn restart_game_system(
         Text2dBundle {
             text: Text::from_section(
                 "",
-                TextStyle { font: pixel_font, font_size: 16.0, color: theme::GOLD },
+                TextStyle { font: pixel_font, font_size: 19.0, color: theme::GOLD },
             ),
             transform: Transform::from_xyz(PLAY_PILE_X, CARD_HEIGHT / 2.0 + 24.0, 600.0),
             ..default()

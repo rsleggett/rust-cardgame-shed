@@ -26,6 +26,8 @@ pub(crate) fn update_pile_status_text(
     let pile_scale = layout.pile_scale();
     transform.translation.x = layout.play_pile_x();
     transform.translation.y = (CARD_HEIGHT / 2.0 + 24.0) * pile_scale;
+    // Grow the prompt with the (larger) portrait pile so it reads on a phone.
+    transform.scale = Vec3::splat(pile_scale);
 
     if feedback.0 > 0.0 {
         feedback.0 = (feedback.0 - time.delta_seconds()).max(0.0);

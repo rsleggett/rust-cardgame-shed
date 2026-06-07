@@ -33,6 +33,7 @@ use crate::systems::swap::{
 use crate::systems::visuals::update_card_face_up_state;
 use crate::theme;
 use crate::ui::game_over::{game_over_screen_system, restart_game_system};
+use crate::ui::header::{spawn_header, update_header_phase};
 use crate::ui::info_overlay::{handle_info_buttons, spawn_info_controls, InfoPanelOpen};
 use crate::ui::pile_status::{update_pile_status_text, PileStatusText};
 use crate::ui::play_button::{
@@ -113,6 +114,7 @@ impl Plugin for GamePlugin {
                 apply_responsive_layout,
                 handle_info_buttons,
                 depress_buttons,
+                update_header_phase,
             ));
     }
 }
@@ -170,7 +172,7 @@ fn setup_game(
         Text2dBundle {
             text: Text::from_section(
                 "",
-                TextStyle { font: pixel_font.clone(), font_size: 16.0, color: theme::GOLD },
+                TextStyle { font: pixel_font.clone(), font_size: 19.0, color: theme::GOLD },
             ),
             transform: Transform::from_xyz(PLAY_PILE_X, CARD_HEIGHT / 2.0 + 24.0, 600.0),
             ..default()
@@ -209,6 +211,9 @@ fn setup_game(
 
     // Phone info overlay controls (hidden on wide screens by apply_responsive_layout).
     spawn_info_controls(&mut commands, ui_font.clone());
+
+    // Persistent top header — game name + current phase, both orientations.
+    spawn_header(&mut commands, ui_font.clone(), pixel_font.clone());
 
     // Top-centre swap-phase hint banner (shown only during Swap).
     spawn_swap_hint(&mut commands, ui_font, pixel_font);
