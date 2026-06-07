@@ -606,9 +606,9 @@ fn manage_seat_avatars(
                     av.spawn(Text2dBundle {
                         text: Text::from_section(
                             player.name.clone(),
-                            TextStyle { font: ui_font.clone(), font_size: 15.0, color: Color::WHITE },
+                            TextStyle { font: ui_font.clone(), font_size: 19.0, color: Color::WHITE },
                         ),
-                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 14.0, 0.1),
+                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 16.0, 0.1),
                         ..default()
                     });
                     av.spawn(Text2dBundle {

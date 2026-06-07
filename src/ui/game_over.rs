@@ -349,10 +349,10 @@ pub(crate) fn restart_game_system(
         game_state.current_player = dealer.min(PLAYER_COUNT.saturating_sub(1));
     }
 
-    let ui_font = asset_server.load("fonts/Rubik-Regular.ttf");
+    let rank_font = asset_server.load("fonts/TitanOne-Regular.ttf");
     let suit_font = asset_server.load("fonts/NotoSansSymbols2-Regular.ttf");
     let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
-    game_state.prepare_dealing(&mut commands, ui_font, suit_font, pixel_font.clone());
+    game_state.prepare_dealing(&mut commands, rank_font, suit_font, pixel_font.clone());
 
     commands.spawn((
         PileStatusText,

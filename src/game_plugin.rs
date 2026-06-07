@@ -152,9 +152,10 @@ fn setup_game(
     add_match_players(&mut game_state, &match_state);
 
     let ui_font = asset_server.load("fonts/Rubik-Regular.ttf");
+    let rank_font = asset_server.load("fonts/TitanOne-Regular.ttf");
     let suit_font = asset_server.load("fonts/NotoSansSymbols2-Regular.ttf");
     let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
-    game_state.prepare_dealing(&mut commands, ui_font.clone(), suit_font, pixel_font.clone());
+    game_state.prepare_dealing(&mut commands, rank_font, suit_font, pixel_font.clone());
 
     // Pile status text — world-space Text2d above the play pile (gold neon prompt)
     commands.spawn((

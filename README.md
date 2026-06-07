@@ -40,7 +40,7 @@ Built on the Bevy ECS (Entity Component System) game engine. The game features:
 - `src/main.rs` — application entry point (1440×900 window)
 - `tests/` — integration tests driving real Bevy `App`s
 - `src/theme.rs` — "Arcade Felt" palette + visual helpers (single source of style truth)
-- `scripts/download-fonts.sh` — fetches the font assets (Rubik, Silkscreen, Noto suit glyphs; not tracked in git)
+- `scripts/download-fonts.sh` — fetches the font assets (Rubik, Titan One, Silkscreen, Noto suit glyphs; not tracked in git)
 - `scripts/download-music.sh` — sets up `assets/music/` and prints CC0 track sources (optional)
 
 See [CLAUDE.md](CLAUDE.md) for an architecture overview and [DEVELOPMENT.md](DEVELOPMENT.md) for design notes, per-phase decisions, and outstanding work.

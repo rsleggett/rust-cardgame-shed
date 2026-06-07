@@ -12,10 +12,13 @@ mkdir -p "$FONT_DIR"
 FONTS=(
   "NotoSans|https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf|NotoSans-Regular.ttf"
   "NotoSansSymbols2|https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssymbols2/NotoSansSymbols2-Regular.ttf|NotoSansSymbols2-Regular.ttf"
-  # Arcade Felt skin: Rubik (UI / card ranks) + Silkscreen (pixel HUD numerals).
-  # Rubik is shipped as a variable font; Bevy renders its default axis fine.
+  # Arcade Felt skin: Rubik (UI body) + Silkscreen (pixel HUD numerals) +
+  # Titan One (chunky display weight for card ranks). Rubik ships as a variable
+  # font and Bevy only renders its default (regular) axis, so the heavy card
+  # ranks use Titan One — a single static weight — instead of a Rubik bold.
   "Rubik|https://raw.githubusercontent.com/google/fonts/main/ofl/rubik/Rubik%5Bwght%5D.ttf|Rubik-Regular.ttf"
   "Silkscreen|https://raw.githubusercontent.com/google/fonts/main/ofl/silkscreen/Silkscreen-Regular.ttf|Silkscreen-Regular.ttf"
+  "TitanOne|https://raw.githubusercontent.com/google/fonts/main/ofl/titanone/TitanOne-Regular.ttf|TitanOne-Regular.ttf"
 )
 
 for entry in "${FONTS[@]}"; do
