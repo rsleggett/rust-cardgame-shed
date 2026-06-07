@@ -11,7 +11,8 @@ use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X};
 use crate::rendering::card_renderer::CardRendererPlugin;
 use crate::systems::ai_runner::{ai_player_system, AITimer};
 use crate::systems::consumables::{
-    handle_mulligan_key, handle_peek_key, tick_peek_timer, PeekRevealTimer,
+    handle_consumable_click, handle_mulligan_key, handle_peek_key, spawn_consumable_bar,
+    tick_peek_timer, update_consumable_cards, PeekRevealTimer,
 };
 use crate::systems::dealing::{deal_cards_system, draw_first_card_system, DealTimer};
 use crate::systems::draft::{
@@ -94,6 +95,8 @@ impl Plugin for GamePlugin {
                 handle_mulligan_key,
                 handle_peek_key,
                 tick_peek_timer,
+                update_consumable_cards,
+                handle_consumable_click,
             ))
             .add_systems(Update, (
                 // Swap phase systems — separate block since the first two are full.
@@ -152,9 +155,10 @@ fn setup_game(
     add_match_players(&mut game_state, &match_state);
 
     let ui_font = asset_server.load("fonts/Rubik-Regular.ttf");
+    let rank_font = asset_server.load("fonts/TitanOne-Regular.ttf");
     let suit_font = asset_server.load("fonts/NotoSansSymbols2-Regular.ttf");
     let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
-    game_state.prepare_dealing(&mut commands, ui_font.clone(), suit_font, pixel_font.clone());
+    game_state.prepare_dealing(&mut commands, rank_font, suit_font, pixel_font.clone());
 
     // Pile status text — world-space Text2d above the play pile (gold neon prompt)
     commands.spawn((
@@ -174,7 +178,7 @@ fn setup_game(
     spawn_chunky_button(
         &mut commands,
         PlayButton,
-        "PLAY ▸",
+        "PLAY >",
         theme::LIME,
         128.0,
         false,
@@ -191,6 +195,10 @@ fn setup_game(
         true,
         ui_font.clone(),
     );
+
+    // Consumable mini-cards (Mulligan / Peek) sit in the bottom action bar, just
+    // right of the centre Play button. Hidden until the human owns each buff.
+    spawn_consumable_bar(&mut commands, ui_font.clone(), pixel_font.clone());
 
     spawn_score_hud(&mut commands, ui_font.clone(), pixel_font.clone());
     spawn_rules_info_panel(&mut commands, ui_font, pixel_font);
@@ -217,7 +225,7 @@ pub(crate) fn spawn_chunky_button<M: Component>(
             ButtonBundle {
                 style: Style {
                     position_type: PositionType::Absolute,
-                    bottom: Val::Px(12.0),
+                    bottom: Val::Px(24.0),
                     left: Val::Percent(50.0),
                     margin: UiRect::left(Val::Px(-width / 2.0)),
                     width: Val::Px(width),

@@ -27,8 +27,8 @@ pub(crate) fn spawn_score_hud(
             NodeBundle {
                 style: Style {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(12.0),
-                    right: Val::Px(12.0),
+                    top: Val::Px(24.0),
+                    right: Val::Px(24.0),
                     padding: UiRect::all(Val::Px(10.0)),
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(2.0),

@@ -42,8 +42,8 @@ pub(crate) fn spawn_rules_info_panel(
             NodeBundle {
                 style: Style {
                     position_type: PositionType::Absolute,
-                    bottom: Val::Px(12.0),
-                    left: Val::Px(12.0),
+                    bottom: Val::Px(24.0),
+                    left: Val::Px(24.0),
                     padding: UiRect::all(Val::Px(12.0)),
                     flex_direction: FlexDirection::Column,
                     max_width: Val::Px(400.0),

@@ -3,7 +3,7 @@ use bevy::render::camera::ScalingMode;
 use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
 use crate::components::game::{GameState, GamePhase, MatchState};
 use crate::components::card_visual::update_card_visuals;
-use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT, CARD_OVERLAP, Z_INDEX_STEP, PLAY_PILE_X, HAND_FAN_STEP, HAND_FAN_ANGLE, HAND_FAN_ARC};
+use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT, CARD_OVERLAP, Z_INDEX_STEP, PLAY_PILE_X, HAND_FAN_STEP, HAND_FAN_ANGLE, HAND_FAN_ARC, ACTION_BAR_CLEARANCE};
 use crate::systems::input::HoveredCard;
 use crate::theme;
 
@@ -163,11 +163,11 @@ fn setup(
             SpriteBundle {
                 sprite: Sprite {
                     color: theme::MAGENTA,
-                    custom_size: Some(Vec2::new(46.0, 24.0)),
+                    custom_size: Some(Vec2::new(60.0, 34.0)),
                     ..default()
                 },
                 transform: Transform::from_xyz(
-                    PLAY_PILE_X + CARD_WIDTH / 2.0 + 4.0,
+                    PLAY_PILE_X + CARD_WIDTH / 2.0 + 10.0,
                     CARD_HEIGHT / 2.0 - 4.0,
                     620.0,
                 ),
@@ -181,7 +181,7 @@ fn setup(
                 Text2dBundle {
                     text: Text::from_section(
                         "",
-                        TextStyle { font: badge_font, font_size: 12.0, color: Color::WHITE },
+                        TextStyle { font: badge_font, font_size: 19.0, color: Color::WHITE },
                     ),
                     transform: Transform::from_xyz(0.0, 0.0, 0.1),
                     ..default()
@@ -371,14 +371,16 @@ pub(crate) fn card_resting_transform(
         _ => {
             let hand_base_y = if is_bottom {
                 // Human hand sits near the bottom edge of the design rect (not the
-                // live window) so it no longer drifts with the AutoMin scale. In
-                // portrait it's lifted clear of the bottom-centre Play/Done button
-                // (a ~52px screen-space widget) so the two don't overlap on a phone.
+                // live window) so it no longer drifts with the AutoMin scale, then
+                // is lifted by ACTION_BAR_CLEARANCE so the bottom action bar
+                // (Play/Done button + consumable mini-cards) sits below it without
+                // overlap at any hand size. Portrait lifts further for the taller
+                // phone layout.
                 let base = -layout.design_height / 2.0 + CARD_HEIGHT / 2.0;
                 if layout.orientation == Orientation::Portrait {
-                    base + 150.0
+                    base + 150.0 + ACTION_BAR_CLEARANCE
                 } else {
-                    base
+                    base + ACTION_BAR_CLEARANCE
                 }
             } else if layout.orientation == Orientation::Portrait {
                 // AI hands ride just outside their face rows in the compact strip
@@ -606,17 +608,17 @@ fn manage_seat_avatars(
                     av.spawn(Text2dBundle {
                         text: Text::from_section(
                             player.name.clone(),
-                            TextStyle { font: ui_font.clone(), font_size: 15.0, color: Color::WHITE },
+                            TextStyle { font: ui_font.clone(), font_size: 19.0, color: Color::WHITE },
                         ),
-                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 14.0, 0.1),
+                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 16.0, 0.1),
                         ..default()
                     });
                     av.spawn(Text2dBundle {
                         text: Text::from_section(
                             mood,
-                            TextStyle { font: pixel_font.clone(), font_size: 9.0, color: theme::GOLD },
+                            TextStyle { font: pixel_font.clone(), font_size: 13.0, color: theme::GOLD },
                         ),
-                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 30.0, 0.1),
+                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 34.0, 0.1),
                         ..default()
                     });
                 });

@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use crate::components::card::{Card, Rank};
 use crate::components::game::{BuffKind, GamePhase, GameState, Player};
-use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X, Z_INDEX_STEP};
+use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X, Z_INDEX_STEP, ACTION_BAR_CLEARANCE};
 use crate::rendering::card_renderer::{CardAnimation, Layout};
 use crate::rules::{can_play_card, is_burn};
 
@@ -278,7 +278,7 @@ pub(crate) fn draw_refill_system(
 
     // Approximate target at the human hand's bottom-edge anchor in design space
     // (layout_cards snaps to the exact fan position once the animation finishes).
-    let hand_base_y = -layout.design_height / 2.0 + CARD_HEIGHT / 2.0;
+    let hand_base_y = -layout.design_height / 2.0 + CARD_HEIGHT / 2.0 + ACTION_BAR_CLEARANCE;
     let refill_target = target_hand_size(&game_state.players[0]);
 
     while game_state.players[0].hand.len() < refill_target && !game_state.draw_pile.is_empty() {
