@@ -6,7 +6,9 @@
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use crate::components::card::{Card, Suit};
+use crate::components::game::{GamePhase, GameState};
 use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT};
+use crate::systems::swap::SwapState;
 use crate::theme;
 
 /// The neon card-back base colour (dark indigo). The lattice pattern in the
@@ -265,6 +267,8 @@ pub fn spawn_card_complete(
 /// visibility and recolours the card body.
 #[allow(clippy::type_complexity)]
 pub fn update_card_visuals(
+    game_state: Res<GameState>,
+    swap_state: Res<SwapState>,
     mut card_query: Query<(Entity, &Card, &mut Sprite)>,
     children_q: Query<&Children>,
     mut child_q: Query<(
@@ -276,6 +280,20 @@ pub fn update_card_visuals(
         Option<&CardShadow>,
     )>,
 ) {
+    // During the swap phase, once the human has staged a hand card, light a glow
+    // on their face-up cards to show where to click next (the swap target).
+    let swap_targets: &[Entity] = if game_state.phase == GamePhase::Swap
+        && swap_state.human_selected_hand.is_some()
+    {
+        game_state
+            .players
+            .first()
+            .map(|p| p.face_up_cards.as_slice())
+            .unwrap_or(&[])
+    } else {
+        &[]
+    };
+
     for (entity, card, mut sprite) in card_query.iter_mut() {
         sprite.color = if card.invalid_timer > 0.0 {
             let intensity = (card.invalid_timer * 10.0).sin().abs();
@@ -295,7 +313,7 @@ pub fn update_card_visuals(
         // The neon ring identifies a special card whenever its face is visible —
         // consistent regardless of whose turn it is or whether it's playable
         // right now (the badge already names the effect; the ring reinforces it).
-        let glow_on = is_special && face_shown;
+        let glow_on = (is_special && face_shown) || swap_targets.contains(&entity);
         let shadow_on = card.is_selected;
 
         let Ok(children) = children_q.get(entity) else { continue; };

@@ -5,8 +5,8 @@ use bevy::prelude::*;
 
 use crate::components::card::{Card, Rank};
 use crate::components::game::{BuffKind, GamePhase, GameState, Player};
-use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X, Z_INDEX_STEP, ACTION_BAR_CLEARANCE};
-use crate::rendering::card_renderer::{CardAnimation, Layout};
+use crate::rendering::card_constants::Z_INDEX_STEP;
+use crate::rendering::card_renderer::{card_resting_transform, CardAnimation, Layout, SET_HAND};
 use crate::rules::{can_play_card, is_burn};
 
 pub fn has_valid_play(
@@ -102,6 +102,7 @@ pub fn play_selection(
     game_state: &mut GameState,
     cards: &Query<&Card>,
     transforms: &Query<&GlobalTransform>,
+    layout: &Layout,
     selection: &[Entity],
 ) {
     if selection.is_empty() { return; }
@@ -111,6 +112,7 @@ pub fn play_selection(
         Err(_) => return,
     };
     let playing_player = game_state.current_player;
+    let pile_x = layout.play_pile_x();
 
     // Push all to play pile with animations
     for &entity in selection {
@@ -119,7 +121,7 @@ pub fn play_selection(
         let target_z = 500.0 + game_state.cards_in_play.len() as f32 * Z_INDEX_STEP;
         let start_pos = transforms.get(entity).map(|t| t.translation()).unwrap_or(Vec3::ZERO);
         commands.entity(entity).insert(CardAnimation {
-            target_position: Vec3::new(PLAY_PILE_X, 0.0, target_z),
+            target_position: Vec3::new(pile_x, 0.0, target_z),
             start_position: start_pos,
             progress: 0.0,
             speed: 3.0,
@@ -276,22 +278,25 @@ pub(crate) fn draw_refill_system(
         return;
     }
 
-    // Approximate target at the human hand's bottom-edge anchor in design space
-    // (layout_cards snaps to the exact fan position once the animation finishes).
-    let hand_base_y = -layout.design_height / 2.0 + CARD_HEIGHT / 2.0 + ACTION_BAR_CLEARANCE;
     let refill_target = target_hand_size(&game_state.players[0]);
+    // Cards fly in from the draw pile.
+    let draw_start = Vec3::new(layout.draw_pile_x(), 0.0, 390.0);
 
     while game_state.players[0].hand.len() < refill_target && !game_state.draw_pile.is_empty() {
         let new_card = game_state.draw_pile.pop().unwrap();
         let hand_idx = game_state.players[0].hand.len();
         game_state.players[0].hand.push(new_card);
 
-        // Approximate target at the hand fan centre — layout_cards snaps to exact pos
-        // once the animation finishes (1-frame, imperceptible).
-        let target_z = 200.0 + hand_idx as f32 * Z_INDEX_STEP;
+        // Target the card's exact resting slot (lifted + orientation-aware). The
+        // hand count grows as we add cards, so the early targets are slightly off
+        // — layout_cards snaps each to its final fan position once the animation
+        // finishes (1-frame, imperceptible).
+        let hand_count = game_state.players[0].hand.len();
+        let (target, _rot, _scale) =
+            card_resting_transform(0, SET_HAND, hand_idx, hand_count, &layout);
         commands.entity(new_card).insert(CardAnimation {
-            target_position: Vec3::new(0.0, hand_base_y, target_z),
-            start_position: Vec3::new(0.0, 0.0, 390.0),
+            target_position: target,
+            start_position: draw_start,
             progress: 0.0,
             speed: 2.5,
         });

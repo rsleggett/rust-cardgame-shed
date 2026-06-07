@@ -6,7 +6,8 @@ use bevy::prelude::*;
 
 use crate::components::card::Card;
 use crate::components::game::{BuffKind, GamePhase, GameState};
-use crate::rendering::card_constants::{CARD_HEIGHT, CARD_WIDTH, PLAY_PILE_X};
+use crate::rendering::card_constants::{CARD_HEIGHT, CARD_WIDTH};
+use crate::rendering::card_renderer::Layout;
 use crate::rules::can_play_card;
 use crate::systems::play::{pickup_cards_in_play, play_selection};
 
@@ -120,6 +121,7 @@ pub(crate) fn handle_mouse_input(
     cards: Query<&Card>,
     transforms: Query<&GlobalTransform>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
+    layout: Res<Layout>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
     touches: Res<Touches>,
     mut invalid_ev: EventWriter<InvalidCardClicked>,
@@ -139,10 +141,14 @@ pub(crate) fn handle_mouse_input(
     // other card interaction is allowed — the player must pick up before
     // flipping a face-down or staging anything else.
     if game_state.needs_to_pickup && game_state.current_player == 0 {
-        let in_pile = world_position.x >= PLAY_PILE_X - CARD_WIDTH / 2.0 - 12.0
-            && world_position.x <= PLAY_PILE_X + CARD_WIDTH / 2.0 + 12.0
-            && world_position.y >= -CARD_HEIGHT / 2.0 - 12.0
-            && world_position.y <= CARD_HEIGHT / 2.0 + 12.0;
+        let pile_x = layout.play_pile_x();
+        let pile_scale = layout.pile_scale();
+        let hx = CARD_WIDTH / 2.0 * pile_scale + 12.0;
+        let hy = CARD_HEIGHT / 2.0 * pile_scale + 12.0;
+        let in_pile = world_position.x >= pile_x - hx
+            && world_position.x <= pile_x + hx
+            && world_position.y >= -hy
+            && world_position.y <= hy;
         if in_pile {
             let current_player_index = game_state.current_player;
             pickup_cards_in_play(&mut game_state, current_player_index);
@@ -195,7 +201,7 @@ pub(crate) fn handle_mouse_input(
     // which routes an invalid play to a pickup instead of flashing red — the
     // player can't know what the card is before flipping it.
     if playing_from_face_down {
-        play_selection(&mut commands, &mut game_state, &cards, &transforms, &[card_entity]);
+        play_selection(&mut commands, &mut game_state, &cards, &transforms, &layout, &[card_entity]);
         // Don't seed last_click — face-down already plays on a single click.
         last_click.entity = None;
         return;
@@ -231,7 +237,7 @@ pub(crate) fn handle_mouse_input(
         last_click.entity == Some(card_entity) && last_click.age < DOUBLE_CLICK_WINDOW;
     if is_double_click {
         game_state.selected_cards.clear();
-        play_selection(&mut commands, &mut game_state, &cards, &transforms, &[card_entity]);
+        play_selection(&mut commands, &mut game_state, &cards, &transforms, &layout, &[card_entity]);
         last_click.entity = None;
         return;
     }
@@ -277,6 +283,7 @@ pub(crate) fn confirm_play_system(
     mut game_state: ResMut<GameState>,
     cards: Query<&Card>,
     transforms: Query<&GlobalTransform>,
+    layout: Res<Layout>,
     keyboard: Res<ButtonInput<KeyCode>>,
 ) {
     if game_state.phase != GamePhase::Playing || game_state.current_player != 0 { return; }
@@ -289,5 +296,5 @@ pub(crate) fn confirm_play_system(
     if game_state.selected_cards.is_empty() { return; }
 
     let selection = std::mem::take(&mut game_state.selected_cards);
-    play_selection(&mut commands, &mut game_state, &cards, &transforms, &selection);
+    play_selection(&mut commands, &mut game_state, &cards, &transforms, &layout, &selection);
 }

@@ -8,6 +8,7 @@ use bevy::prelude::*;
 
 use crate::components::card::Card;
 use crate::components::game::{BuffKind, GamePhase, GameState};
+use crate::rendering::card_renderer::Layout;
 use crate::rules::can_play_card;
 use crate::systems::play::{pickup_cards_in_play, play_selection};
 
@@ -28,6 +29,7 @@ pub(crate) fn ai_player_system(
     mut game_state: ResMut<GameState>,
     cards: Query<&Card>,
     transforms: Query<&GlobalTransform>,
+    layout: Res<Layout>,
     time: Res<Time>,
     mut ai_timer: ResMut<AITimer>,
 ) {
@@ -104,6 +106,6 @@ pub(crate) fn ai_player_system(
             personality,
             selection.len()
         );
-        play_selection(&mut commands, &mut game_state, &cards, &transforms, &selection);
+        play_selection(&mut commands, &mut game_state, &cards, &transforms, &layout, &selection);
     }
 }

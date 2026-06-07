@@ -85,6 +85,34 @@ impl Layout {
             Orientation::Portrait => Self { orientation, design_width: 720.0, design_height: 1280.0 },
         }
     }
+
+    /// World-space x of the play-pile centre. Landscape keeps the original
+    /// off-centre anchor; portrait centres the pile so it dominates the narrow
+    /// screen (the draw pile slides left to make room — see `draw_pile_x`).
+    pub fn play_pile_x(&self) -> f32 {
+        match self.orientation {
+            Orientation::Landscape => PLAY_PILE_X,
+            Orientation::Portrait => 0.0,
+        }
+    }
+
+    /// World-space x of the draw pile. Centred in landscape; shifted left in
+    /// portrait so the centred play pile has room.
+    pub fn draw_pile_x(&self) -> f32 {
+        match self.orientation {
+            Orientation::Landscape => 0.0,
+            Orientation::Portrait => -210.0,
+        }
+    }
+
+    /// Visual scale for the play/discard pile (and its highlight/flash). Enlarged
+    /// in portrait so the pile reads large on a phone; 1.0 on desktop.
+    pub fn pile_scale(&self) -> f32 {
+        match self.orientation {
+            Orientation::Landscape => 1.0,
+            Orientation::Portrait => 1.25,
+        }
+    }
 }
 
 fn setup(
@@ -314,7 +342,7 @@ pub(crate) fn seat_anchor(player_index: usize, orientation: Orientation) -> (f32
         },
         // Design rect 720x1280 => y in [-640, 640].
         Orientation::Portrait => match player_index {
-            0 => (   0.0, -180.0, true),  // human — low; hand anchors to the bottom edge
+            0 => (   0.0, -250.0, true),  // human — low; clears the centred pile
             1 => (-235.0,  520.0, false), // AI 1  — top strip, left
             2 => (   0.0,  520.0, false), // AI 2  — top strip, centre
             3 => ( 235.0,  520.0, false), // AI 3  — top strip, right
@@ -328,7 +356,7 @@ pub(crate) fn seat_anchor(player_index: usize, orientation: Orientation) -> (f32
 /// without overlapping. Landscape is always 1.0, so desktop is unchanged.
 pub(crate) fn seat_scale(player_index: usize, orientation: Orientation) -> f32 {
     match (orientation, player_index) {
-        (Orientation::Portrait, 0) => 1.0, // human stays large
+        (Orientation::Portrait, 0) => 1.25, // human enlarged so the hand reads big on a phone
         (Orientation::Portrait, _) => 0.62,
         (Orientation::Landscape, _) => 1.0,
     }
@@ -451,33 +479,37 @@ fn layout_cards(
         }
     }
 
-    // Draw pile — centred on screen (always full scale)
+    let pile_x = layout.play_pile_x();
+    let pile_scale = layout.pile_scale();
+
+    // Draw pile — centred in landscape, shifted left in portrait (always full scale).
+    let draw_x = layout.draw_pile_x();
     for (i, &card_entity) in game_state.draw_pile.iter().enumerate() {
         if let Ok(mut t) = transform_query.get_mut(card_entity) {
-            t.translation = Vec3::new(0.0, 0.0, 400.0 - i as f32 * Z_INDEX_STEP);
+            t.translation = Vec3::new(draw_x, 0.0, 400.0 - i as f32 * Z_INDEX_STEP);
             t.rotation = Quat::IDENTITY;
             t.scale = Vec3::ONE;
         }
     }
 
-    // Play pile — full scale, so a card played from a shrunken portrait AI hand
-    // returns to size when it lands.
+    // Play pile — pile_scale so a card played from a shrunken portrait AI hand
+    // settles at the pile's display size when it lands.
     let base_z_play = 500.0;
     for (i, &card_entity) in game_state.cards_in_play.iter().enumerate() {
         if let Ok(mut t) = transform_query.get_mut(card_entity) {
             let z_offset = (game_state.cards_in_play.len() - i - 1) as f32 * Z_INDEX_STEP;
-            t.translation = Vec3::new(PLAY_PILE_X, 0.0, base_z_play - z_offset);
+            t.translation = Vec3::new(pile_x, 0.0, base_z_play - z_offset);
             t.rotation = Quat::IDENTITY;
-            t.scale = Vec3::ONE;
+            t.scale = Vec3::splat(pile_scale);
         }
     }
 
     // Discard pile (burned cards sit under the play pile)
     for (i, &card_entity) in game_state.discard_pile.iter().enumerate() {
         if let Ok(mut t) = transform_query.get_mut(card_entity) {
-            t.translation = Vec3::new(PLAY_PILE_X, 0.0, 450.0 - i as f32 * Z_INDEX_STEP);
+            t.translation = Vec3::new(pile_x, 0.0, 450.0 - i as f32 * Z_INDEX_STEP);
             t.rotation = Quat::IDENTITY;
-            t.scale = Vec3::ONE;
+            t.scale = Vec3::splat(pile_scale);
         }
     }
 }
@@ -658,12 +690,17 @@ pub struct PileCountText;
 
 fn update_pile_badge(
     game_state: Res<GameState>,
-    mut badge_q: Query<&mut Visibility, With<PileCountBadge>>,
+    layout: Res<Layout>,
+    mut badge_q: Query<(&mut Visibility, &mut Transform), With<PileCountBadge>>,
     mut text_q: Query<&mut Text, With<PileCountText>>,
 ) {
     let count = game_state.cards_in_play.len();
-    if let Ok(mut vis) = badge_q.get_single_mut() {
+    let pile_scale = layout.pile_scale();
+    if let Ok((mut vis, mut tf)) = badge_q.get_single_mut() {
         *vis = if count > 0 { Visibility::Visible } else { Visibility::Hidden };
+        tf.translation.x = layout.play_pile_x() + (CARD_WIDTH / 2.0 + 16.0) * pile_scale;
+        tf.translation.y = (CARD_HEIGHT / 2.0 - 4.0) * pile_scale;
+        tf.scale = Vec3::splat(pile_scale);
     }
     if let Ok(mut text) = text_q.get_single_mut() {
         let label = format!("\u{00D7}{}", count);
@@ -782,7 +819,8 @@ fn detect_juice_events(
                         custom_size: Some(Vec2::new(CARD_WIDTH + 30.0, CARD_HEIGHT + 30.0)),
                         ..default()
                     },
-                    transform: Transform::from_xyz(PLAY_PILE_X, 0.0, 615.0),
+                    transform: Transform::from_xyz(layout.play_pile_x(), 0.0, 615.0)
+                        .with_scale(Vec3::splat(layout.pile_scale())),
                     ..default()
                 },
             ));
@@ -796,14 +834,17 @@ fn detect_juice_events(
 // Pulse the pickup highlight when the human player needs to pick up cards
 fn update_pickup_highlight(
     game_state: Res<GameState>,
+    layout: Res<Layout>,
     time: Res<Time>,
-    mut query: Query<(&mut Visibility, &mut Sprite), With<PickupHighlight>>,
+    mut query: Query<(&mut Visibility, &mut Sprite, &mut Transform), With<PickupHighlight>>,
 ) {
     let show = game_state.needs_to_pickup
         && game_state.current_player == 0
         && game_state.phase == GamePhase::Playing;
 
-    for (mut vis, mut sprite) in &mut query {
+    for (mut vis, mut sprite, mut tf) in &mut query {
+        tf.translation.x = layout.play_pile_x();
+        tf.scale = Vec3::splat(layout.pile_scale());
         if show {
             *vis = Visibility::Visible;
             let alpha = 0.4 + 0.35 * (time.elapsed_seconds() * 4.0).sin();
