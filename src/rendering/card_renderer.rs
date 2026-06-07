@@ -340,12 +340,14 @@ pub(crate) fn seat_anchor(player_index: usize, orientation: Orientation) -> (f32
             3 => ( 440.0,  220.0, false), // AI 3  — top right
             _ => (   0.0,    0.0, true),
         },
-        // Design rect 720x1280 => y in [-640, 640].
+        // Design rect 720x1280 => y in [-640, 640]. AI strip sits a little lower
+        // than the top edge so the persistent header bar (screen-space, ~top 76
+        // design px) clears the avatars above each seat.
         Orientation::Portrait => match player_index {
             0 => (   0.0, -250.0, true),  // human — low; clears the centred pile
-            1 => (-235.0,  520.0, false), // AI 1  — top strip, left
-            2 => (   0.0,  520.0, false), // AI 2  — top strip, centre
-            3 => ( 235.0,  520.0, false), // AI 3  — top strip, right
+            1 => (-235.0,  445.0, false), // AI 1  — top strip, left
+            2 => (   0.0,  445.0, false), // AI 2  — top strip, centre
+            3 => ( 235.0,  445.0, false), // AI 3  — top strip, right
             _ => (   0.0,    0.0, true),
         },
     }
@@ -358,6 +360,17 @@ pub(crate) fn seat_scale(player_index: usize, orientation: Orientation) -> f32 {
     match (orientation, player_index) {
         (Orientation::Portrait, 0) => 1.25, // human enlarged so the hand reads big on a phone
         (Orientation::Portrait, _) => 0.62,
+        (Orientation::Landscape, _) => 1.0,
+    }
+}
+
+/// Visual scale for a seat's *avatar cluster* (disc + name + mood). Deliberately
+/// decoupled from `seat_scale`: the portrait AIs render their cards small to fit
+/// the narrow top strip, but their avatars/names shouldn't shrink as hard or
+/// they become unreadable on a phone. Landscape stays 1.0 (desktop unchanged).
+pub(crate) fn avatar_scale(player_index: usize, orientation: Orientation) -> f32 {
+    match (orientation, player_index) {
+        (Orientation::Portrait, _) => 0.85,
         (Orientation::Landscape, _) => 1.0,
     }
 }
@@ -559,8 +572,8 @@ pub struct SeatRing(pub usize);
 /// the seat's card block, scaled with the seat.
 fn avatar_anchor(seat: usize, layout: &Layout) -> Vec3 {
     let (table_x, face_y, _is_bottom) = seat_anchor(seat, layout.orientation);
-    let scale = seat_scale(seat, layout.orientation);
-    Vec3::new(table_x, face_y + 120.0 * scale, 650.0)
+    let scale = avatar_scale(seat, layout.orientation);
+    Vec3::new(table_x, face_y + 100.0 * scale, 650.0)
 }
 
 /// Spawns one avatar per AI seat the first time the roster exists, then keeps
@@ -591,7 +604,7 @@ fn manage_seat_avatars(
                 .to_uppercase()
                 .to_string();
             let mood = theme::seat_mood(player.personality);
-            let scale = seat_scale(seat, layout.orientation);
+            let scale = avatar_scale(seat, layout.orientation);
             let pos = avatar_anchor(seat, &layout);
 
             commands
@@ -631,7 +644,7 @@ fn manage_seat_avatars(
                     av.spawn(Text2dBundle {
                         text: Text::from_section(
                             mono,
-                            TextStyle { font: pixel_font.clone(), font_size: 20.0, color: Color::WHITE },
+                            TextStyle { font: pixel_font.clone(), font_size: 22.0, color: Color::WHITE },
                         ),
                         transform: Transform::from_xyz(0.0, 0.0, 0.1),
                         ..default()
@@ -640,17 +653,17 @@ fn manage_seat_avatars(
                     av.spawn(Text2dBundle {
                         text: Text::from_section(
                             player.name.clone(),
-                            TextStyle { font: ui_font.clone(), font_size: 19.0, color: Color::WHITE },
+                            TextStyle { font: ui_font.clone(), font_size: 23.0, color: Color::WHITE },
                         ),
-                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 16.0, 0.1),
+                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 18.0, 0.1),
                         ..default()
                     });
                     av.spawn(Text2dBundle {
                         text: Text::from_section(
                             mood,
-                            TextStyle { font: pixel_font.clone(), font_size: 13.0, color: theme::GOLD },
+                            TextStyle { font: pixel_font.clone(), font_size: 16.0, color: theme::GOLD },
                         ),
-                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 34.0, 0.1),
+                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 38.0, 0.1),
                         ..default()
                     });
                 });
@@ -660,7 +673,7 @@ fn manage_seat_avatars(
 
     // Reposition every avatar above its seat (orientation may have flipped).
     for (avatar, mut transform) in avatar_q.iter_mut() {
-        let scale = seat_scale(avatar.0, layout.orientation);
+        let scale = avatar_scale(avatar.0, layout.orientation);
         transform.translation = avatar_anchor(avatar.0, &layout);
         transform.scale = Vec3::splat(scale);
     }

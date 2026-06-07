@@ -9,6 +9,11 @@ use crate::components::game::{
 };
 use crate::theme;
 
+/// Near-black solid fill for a draft row. Keeps the perk text legible (light on
+/// dark) regardless of the cards showing through the veil behind, while the
+/// rarity colour stays as the row's border + accent.
+const ITEM_BG: Color = Color::srgb(0.043, 0.063, 0.078);
+
 /// Marker on the full-screen draft overlay (one per round).
 #[derive(Component)]
 pub(crate) struct DraftScreen;
@@ -210,18 +215,19 @@ pub(crate) fn draft_screen_system(
                                 border: UiRect::all(Val::Px(2.0)),
                                 ..default()
                             },
-                            // Solid rarity fill so the row reads clearly over the
-                            // table cards behind the veil (was a translucent panel
-                            // that left white text illegible on light cards).
-                            background_color: rcolor.into(),
-                            border_color: theme::lighten(rcolor, 0.3).into(),
+                            // Near-black solid fill so light perk text stays
+                            // legible regardless of the table cards showing through
+                            // the veil; the rarity colour becomes the row's border
+                            // + accent rather than the whole fill.
+                            background_color: ITEM_BG.into(),
+                            border_color: rcolor.into(),
                             border_radius: BorderRadius::all(Val::Px(10.0)),
                             ..default()
                         },
                     ))
                     .with_children(|row| {
-                        // Icon chip — a translucent dark square so the glyph stays
-                        // legible on the bright rarity fill.
+                        // Icon chip — a rarity-tinted square holding the glyph in the
+                        // rarity colour, echoing the row's border accent.
                         row.spawn(NodeBundle {
                             style: Style {
                                 width: Val::Px(50.0),
@@ -230,14 +236,14 @@ pub(crate) fn draft_screen_system(
                                 justify_content: JustifyContent::Center,
                                 ..default()
                             },
-                            background_color: Color::srgba(0.0, 0.0, 0.0, 0.22).into(),
+                            background_color: rcolor.with_alpha(0.18).into(),
                             border_radius: BorderRadius::all(Val::Px(8.0)),
                             ..default()
                         })
                         .with_children(|chip| {
                             chip.spawn(TextBundle::from_section(
                                 theme::buff_icon(kind),
-                                TextStyle { font: pixel_font.clone(), font_size: 18.0, color: theme::CARD_INK },
+                                TextStyle { font: pixel_font.clone(), font_size: 18.0, color: rcolor },
                             ));
                         });
 
@@ -256,17 +262,17 @@ pub(crate) fn draft_screen_system(
                             } else {
                                 kind.display_name().to_string()
                             };
-                            // Dark text for contrast on the bright rarity fill.
+                            // Light text for contrast on the near-black fill.
                             col.spawn(TextBundle::from_section(
                                 name,
-                                TextStyle { font: ui_font.clone(), font_size: 19.0, color: theme::CARD_INK },
+                                TextStyle { font: ui_font.clone(), font_size: 19.0, color: Color::WHITE },
                             ));
                             col.spawn(TextBundle::from_section(
                                 rarity.label(),
                                 TextStyle {
                                     font: pixel_font.clone(),
                                     font_size: 14.0,
-                                    color: Color::srgba(0.09, 0.09, 0.125, 0.75),
+                                    color: rcolor,
                                 },
                             ));
                             col.spawn(TextBundle::from_section(
@@ -274,7 +280,7 @@ pub(crate) fn draft_screen_system(
                                 TextStyle {
                                     font: ui_font.clone(),
                                     font_size: 13.0,
-                                    color: Color::srgba(0.09, 0.09, 0.125, 0.88),
+                                    color: Color::srgba(1.0, 1.0, 1.0, 0.78),
                                 },
                             ));
                         });
@@ -301,7 +307,6 @@ pub(crate) fn handle_draft_click(
         .flatten()
         .is_some();
     for (interaction, option, mut bg) in &mut interaction_q {
-        let rcolor = theme::buff_rarity(option.0).color();
         match *interaction {
             Interaction::Pressed => {
                 if !already_picked && !draft_state.picks.is_empty() {
@@ -310,8 +315,8 @@ pub(crate) fn handle_draft_click(
                 }
                 *bg = theme::LIME.into();
             }
-            Interaction::Hovered => *bg = theme::lighten(rcolor, 0.25).into(),
-            Interaction::None => *bg = rcolor.into(),
+            Interaction::Hovered => *bg = theme::lighten(ITEM_BG, 0.12).into(),
+            Interaction::None => *bg = ITEM_BG.into(),
         }
     }
 }

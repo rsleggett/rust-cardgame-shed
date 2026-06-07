@@ -37,7 +37,9 @@ pub(crate) fn spawn_swap_hint(
             NodeBundle {
                 style: Style {
                     position_type: PositionType::Absolute,
-                    top: Val::Px(20.0),
+                    // Below the persistent header bar (44px tall) so the two
+                    // don't overlap.
+                    top: Val::Px(54.0),
                     left: Val::Px(0.0),
                     width: Val::Percent(100.0),
                     justify_content: JustifyContent::Center,
@@ -54,13 +56,13 @@ pub(crate) fn spawn_swap_hint(
                 TextBundle::from_sections([
                     TextSection::new(
                         "SWAP PHASE\n",
-                        TextStyle { font: pixel_font, font_size: 18.0, color: theme::GOLD },
+                        TextStyle { font: pixel_font, font_size: 24.0, color: theme::GOLD },
                     ),
                     TextSection::new(
                         "",
                         TextStyle {
                             font: ui_font,
-                            font_size: 16.0,
+                            font_size: 20.0,
                             color: Color::srgba(1.0, 1.0, 1.0, 0.95),
                         },
                     ),

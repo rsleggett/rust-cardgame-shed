@@ -1,4 +1,5 @@
 pub mod game_over;
+pub mod header;
 pub mod info_overlay;
 pub mod pile_status;
 pub mod play_button;
