@@ -28,12 +28,12 @@ use crate::systems::play::{
 };
 use crate::systems::swap::{
     advance_swap_phase, ai_swap_system, handle_done_swap_button, handle_swap_input,
-    spawn_swap_hint, update_swap_button_visibility, update_swap_hint, DoneSwapButton, SwapState,
+    update_swap_button_visibility, DoneSwapButton, SwapState,
 };
 use crate::systems::visuals::update_card_face_up_state;
 use crate::theme;
 use crate::ui::game_over::{game_over_screen_system, restart_game_system};
-use crate::ui::header::{spawn_header, update_header_phase};
+use crate::ui::header::{spawn_header, update_header};
 use crate::ui::info_overlay::{handle_info_buttons, spawn_info_controls, InfoPanelOpen};
 use crate::ui::pile_status::{update_pile_status_text, PileStatusText};
 use crate::ui::play_button::{
@@ -108,13 +108,12 @@ impl Plugin for GamePlugin {
                 ai_swap_system,
                 advance_swap_phase,
                 update_swap_button_visibility,
-                update_swap_hint,
+                update_header,
                 toggle_music_mute,
                 update_rules_info_panel,
                 apply_responsive_layout,
                 handle_info_buttons,
                 depress_buttons,
-                update_header_phase,
             ));
     }
 }
@@ -212,11 +211,9 @@ fn setup_game(
     // Phone info overlay controls (hidden on wide screens by apply_responsive_layout).
     spawn_info_controls(&mut commands, ui_font.clone());
 
-    // Persistent top header — game name + current phase, both orientations.
-    spawn_header(&mut commands, ui_font.clone(), pixel_font.clone());
-
-    // Top-centre swap-phase hint banner (shown only during Swap).
-    spawn_swap_hint(&mut commands, ui_font, pixel_font);
+    // Persistent top header — game name + current phase, plus the swap-phase
+    // instructions inline (the bar grows to extra lines as needed).
+    spawn_header(&mut commands, ui_font, pixel_font);
 
     info!("Game setup complete! Ready to deal cards.");
 }
