@@ -6,9 +6,7 @@
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use crate::components::card::{Card, Suit};
-use crate::components::game::{BuffKind, GamePhase, GameState};
 use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT};
-use crate::rules::can_play_card;
 use crate::theme;
 
 /// The neon card-back base colour (dark indigo). The lattice pattern in the
@@ -267,7 +265,6 @@ pub fn spawn_card_complete(
 /// visibility and recolours the card body.
 #[allow(clippy::type_complexity)]
 pub fn update_card_visuals(
-    game_state: Res<GameState>,
     mut card_query: Query<(Entity, &Card, &mut Sprite)>,
     children_q: Query<&Children>,
     mut child_q: Query<(
@@ -279,14 +276,6 @@ pub fn update_card_visuals(
         Option<&CardShadow>,
     )>,
 ) {
-    // Human playability context for the glow ring.
-    let human_turn =
-        game_state.phase == GamePhase::Playing && game_state.current_player == 0;
-    let human = game_state.players.first();
-    let has_counter7 = human
-        .map(|p| p.modifiers.iter().any(|b| b.kind == BuffKind::Counter7))
-        .unwrap_or(false);
-
     for (entity, card, mut sprite) in card_query.iter_mut() {
         sprite.color = if card.invalid_timer > 0.0 {
             let intensity = (card.invalid_timer * 10.0).sin().abs();
@@ -303,17 +292,10 @@ pub fn update_card_visuals(
         let face_shown = card.is_face_up && card.show_text;
         let back_shown = !card.is_face_up;
         let is_special = theme::special_color(card.rank).is_some();
-        let glow_on = is_special
-            && face_shown
-            && human_turn
-            && human.map(|p| p.hand.contains(&entity)).unwrap_or(false)
-            && can_play_card(
-                card,
-                game_state.effective_rank,
-                game_state.seven_active,
-                game_state.any_card_playable,
-                has_counter7,
-            );
+        // The neon ring identifies a special card whenever its face is visible —
+        // consistent regardless of whose turn it is or whether it's playable
+        // right now (the badge already names the effect; the ring reinforces it).
+        let glow_on = is_special && face_shown;
         let shadow_on = card.is_selected;
 
         let Ok(children) = children_q.get(entity) else { continue; };

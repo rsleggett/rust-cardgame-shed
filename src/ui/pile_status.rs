@@ -36,7 +36,7 @@ pub(crate) fn update_pile_status_text(
 
     // On the human's turn the prompt becomes a gold neon call-to-action.
     let msg = if !prompt.is_empty() && game_state.current_player == 0 {
-        format!("\u{25B2} YOUR TURN \u{00B7} {}", prompt)
+        format!(">> YOUR TURN - {}", prompt)
     } else {
         prompt
     };

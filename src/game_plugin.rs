@@ -174,7 +174,7 @@ fn setup_game(
     spawn_chunky_button(
         &mut commands,
         PlayButton,
-        "PLAY ▸",
+        "PLAY >",
         theme::LIME,
         128.0,
         false,

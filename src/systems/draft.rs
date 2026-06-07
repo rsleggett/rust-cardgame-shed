@@ -258,7 +258,7 @@ pub(crate) fn draft_screen_system(
                             ));
                             col.spawn(TextBundle::from_section(
                                 rarity.label(),
-                                TextStyle { font: pixel_font.clone(), font_size: 9.0, color: rcolor },
+                                TextStyle { font: pixel_font.clone(), font_size: 14.0, color: rcolor },
                             ));
                             col.spawn(TextBundle::from_section(
                                 kind.description(),

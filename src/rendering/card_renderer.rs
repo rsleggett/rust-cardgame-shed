@@ -163,11 +163,11 @@ fn setup(
             SpriteBundle {
                 sprite: Sprite {
                     color: theme::MAGENTA,
-                    custom_size: Some(Vec2::new(46.0, 24.0)),
+                    custom_size: Some(Vec2::new(60.0, 34.0)),
                     ..default()
                 },
                 transform: Transform::from_xyz(
-                    PLAY_PILE_X + CARD_WIDTH / 2.0 + 4.0,
+                    PLAY_PILE_X + CARD_WIDTH / 2.0 + 10.0,
                     CARD_HEIGHT / 2.0 - 4.0,
                     620.0,
                 ),
@@ -181,7 +181,7 @@ fn setup(
                 Text2dBundle {
                     text: Text::from_section(
                         "",
-                        TextStyle { font: badge_font, font_size: 12.0, color: Color::WHITE },
+                        TextStyle { font: badge_font, font_size: 19.0, color: Color::WHITE },
                     ),
                     transform: Transform::from_xyz(0.0, 0.0, 0.1),
                     ..default()
@@ -614,9 +614,9 @@ fn manage_seat_avatars(
                     av.spawn(Text2dBundle {
                         text: Text::from_section(
                             mood,
-                            TextStyle { font: pixel_font.clone(), font_size: 9.0, color: theme::GOLD },
+                            TextStyle { font: pixel_font.clone(), font_size: 13.0, color: theme::GOLD },
                         ),
-                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 30.0, 0.1),
+                        transform: Transform::from_xyz(0.0, -AVATAR_RADIUS - 34.0, 0.1),
                         ..default()
                     });
                 });
