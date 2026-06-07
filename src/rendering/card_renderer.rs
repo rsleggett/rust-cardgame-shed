@@ -3,7 +3,7 @@ use bevy::render::camera::ScalingMode;
 use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
 use crate::components::game::{GameState, GamePhase, MatchState};
 use crate::components::card_visual::update_card_visuals;
-use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT, CARD_OVERLAP, Z_INDEX_STEP, PLAY_PILE_X, HAND_FAN_STEP, HAND_FAN_ANGLE, HAND_FAN_ARC};
+use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT, CARD_OVERLAP, Z_INDEX_STEP, PLAY_PILE_X, HAND_FAN_STEP, HAND_FAN_ANGLE, HAND_FAN_ARC, ACTION_BAR_CLEARANCE};
 use crate::systems::input::HoveredCard;
 use crate::theme;
 
@@ -371,14 +371,16 @@ pub(crate) fn card_resting_transform(
         _ => {
             let hand_base_y = if is_bottom {
                 // Human hand sits near the bottom edge of the design rect (not the
-                // live window) so it no longer drifts with the AutoMin scale. In
-                // portrait it's lifted clear of the bottom-centre Play/Done button
-                // (a ~52px screen-space widget) so the two don't overlap on a phone.
+                // live window) so it no longer drifts with the AutoMin scale, then
+                // is lifted by ACTION_BAR_CLEARANCE so the bottom action bar
+                // (Play/Done button + consumable mini-cards) sits below it without
+                // overlap at any hand size. Portrait lifts further for the taller
+                // phone layout.
                 let base = -layout.design_height / 2.0 + CARD_HEIGHT / 2.0;
                 if layout.orientation == Orientation::Portrait {
-                    base + 150.0
+                    base + 150.0 + ACTION_BAR_CLEARANCE
                 } else {
-                    base
+                    base + ACTION_BAR_CLEARANCE
                 }
             } else if layout.orientation == Orientation::Portrait {
                 // AI hands ride just outside their face rows in the compact strip

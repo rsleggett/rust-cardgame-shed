@@ -5,6 +5,7 @@ use bevy::prelude::*;
 
 use crate::components::card::Card;
 use crate::components::game::{GamePhase, GameState};
+use crate::systems::consumables::ConsumableCard;
 use crate::systems::play::play_selection;
 use crate::theme;
 
@@ -50,7 +51,10 @@ pub(crate) fn update_play_button_style(
 /// any `Button`, since all chunky buttons share the 12px offset / 5px edge.
 #[allow(clippy::type_complexity)]
 pub(crate) fn depress_buttons(
-    mut button_q: Query<(&Interaction, &mut Style), (Changed<Interaction>, With<Button>)>,
+    mut button_q: Query<
+        (&Interaction, &mut Style),
+        (Changed<Interaction>, With<Button>, Without<ConsumableCard>),
+    >,
 ) {
     for (interaction, mut style) in button_q.iter_mut() {
         if *interaction == Interaction::Pressed {

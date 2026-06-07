@@ -11,7 +11,8 @@ use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X};
 use crate::rendering::card_renderer::CardRendererPlugin;
 use crate::systems::ai_runner::{ai_player_system, AITimer};
 use crate::systems::consumables::{
-    handle_mulligan_key, handle_peek_key, tick_peek_timer, PeekRevealTimer,
+    handle_consumable_click, handle_mulligan_key, handle_peek_key, spawn_consumable_bar,
+    tick_peek_timer, update_consumable_cards, PeekRevealTimer,
 };
 use crate::systems::dealing::{deal_cards_system, draw_first_card_system, DealTimer};
 use crate::systems::draft::{
@@ -94,6 +95,8 @@ impl Plugin for GamePlugin {
                 handle_mulligan_key,
                 handle_peek_key,
                 tick_peek_timer,
+                update_consumable_cards,
+                handle_consumable_click,
             ))
             .add_systems(Update, (
                 // Swap phase systems — separate block since the first two are full.
@@ -192,6 +195,10 @@ fn setup_game(
         true,
         ui_font.clone(),
     );
+
+    // Consumable mini-cards (Mulligan / Peek) sit in the bottom action bar, just
+    // right of the centre Play button. Hidden until the human owns each buff.
+    spawn_consumable_bar(&mut commands, ui_font.clone(), pixel_font.clone());
 
     spawn_score_hud(&mut commands, ui_font.clone(), pixel_font.clone());
     spawn_rules_info_panel(&mut commands, ui_font, pixel_font);
