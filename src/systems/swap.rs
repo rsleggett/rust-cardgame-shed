@@ -8,98 +8,12 @@ use crate::components::game::{GamePhase, GameState};
 use crate::game_plugin::PLAYER_COUNT;
 use crate::rendering::card_constants::{CARD_HEIGHT, CARD_WIDTH};
 use crate::systems::input::primary_pointer_press;
-use crate::theme;
 
 /// Bottom-centre button visible only during the Swap phase. Click → human is
 /// done swapping. Shares the play button's slot via mutually exclusive
 /// visibility.
 #[derive(Component)]
 pub(crate) struct DoneSwapButton;
-
-/// Top-centre hint banner shown only during the Swap phase.
-#[derive(Component)]
-pub(crate) struct SwapHint;
-
-/// Inner text node of the swap hint banner, rewritten each frame.
-#[derive(Component)]
-pub(crate) struct SwapHintText;
-
-/// Spawns the top-centre swap hint banner. Hidden outside the Swap phase by
-/// `update_swap_hint`.
-pub(crate) fn spawn_swap_hint(
-    commands: &mut Commands,
-    ui_font: Handle<Font>,
-    pixel_font: Handle<Font>,
-) {
-    commands
-        .spawn((
-            SwapHint,
-            NodeBundle {
-                style: Style {
-                    position_type: PositionType::Absolute,
-                    // Below the persistent header bar (44px tall) so the two
-                    // don't overlap.
-                    top: Val::Px(54.0),
-                    left: Val::Px(0.0),
-                    width: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    ..default()
-                },
-                visibility: Visibility::Hidden,
-                z_index: ZIndex::Global(40),
-                ..default()
-            },
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                SwapHintText,
-                TextBundle::from_sections([
-                    TextSection::new(
-                        "SWAP PHASE\n",
-                        TextStyle { font: pixel_font, font_size: 24.0, color: theme::GOLD },
-                    ),
-                    TextSection::new(
-                        "",
-                        TextStyle {
-                            font: ui_font,
-                            font_size: 20.0,
-                            color: Color::srgba(1.0, 1.0, 1.0, 0.95),
-                        },
-                    ),
-                ])
-                .with_text_justify(JustifyText::Center),
-            ));
-        });
-}
-
-/// Shows the swap hint during the Swap phase and switches its message based on
-/// whether the human has staged a hand card yet.
-pub(crate) fn update_swap_hint(
-    game_state: Res<GameState>,
-    swap_state: Res<SwapState>,
-    mut hint_q: Query<&mut Visibility, With<SwapHint>>,
-    mut text_q: Query<&mut Text, With<SwapHintText>>,
-) {
-    let in_swap = game_state.phase == GamePhase::Swap;
-    for mut vis in &mut hint_q {
-        let desired = if in_swap { Visibility::Inherited } else { Visibility::Hidden };
-        if *vis != desired {
-            *vis = desired;
-        }
-    }
-    if !in_swap {
-        return;
-    }
-    let Ok(mut text) = text_q.get_single_mut() else { return; };
-    let msg = if swap_state.human_done {
-        "Waiting for opponents to finish swapping...".to_string()
-    } else if swap_state.human_selected_hand.is_some() {
-        "Now tap a glowing table card to swap it in.".to_string()
-    } else {
-        "Tap a hand card, then a table card, to swap. Tap DONE SWAPPING when ready.".to_string()
-    };
-    text.sections[1].value = msg;
-}
 
 /// Transient per-round state for the Swap phase. Reset on exit so the next
 /// round begins with a clean slate.
