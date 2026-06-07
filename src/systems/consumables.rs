@@ -103,7 +103,7 @@ pub(crate) fn spawn_consumable_bar(
                 // Sit just to the right of the 128px-wide Play button (half = 64)
                 // plus a gap, so the bar reads as button + consumables.
                 margin: UiRect::left(Val::Px(80.0)),
-                height: Val::Px(76.0),
+                height: Val::Px(84.0),
                 column_gap: Val::Px(10.0),
                 align_items: AlignItems::Center,
                 ..default()
@@ -116,8 +116,8 @@ pub(crate) fn spawn_consumable_bar(
                     ConsumableCard { kind },
                     ButtonBundle {
                         style: Style {
-                            width: Val::Px(62.0),
-                            height: Val::Px(76.0),
+                            width: Val::Px(80.0),
+                            height: Val::Px(84.0),
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
                             justify_content: JustifyContent::Center,
@@ -135,15 +135,15 @@ pub(crate) fn spawn_consumable_bar(
                 .with_children(|card| {
                     card.spawn(TextBundle::from_section(
                         theme::buff_icon(kind),
-                        TextStyle { font: pixel_font.clone(), font_size: 22.0, color: theme::CARD_INK },
+                        TextStyle { font: pixel_font.clone(), font_size: 26.0, color: theme::CARD_INK },
                     ));
                     card.spawn(TextBundle::from_section(
                         kind.display_name(),
-                        TextStyle { font: ui_font.clone(), font_size: 10.0, color: theme::CARD_INK },
+                        TextStyle { font: ui_font.clone(), font_size: 14.0, color: theme::CARD_INK },
                     ));
                     card.spawn(TextBundle::from_section(
-                        hotkey_hint(kind),
-                        TextStyle { font: pixel_font.clone(), font_size: 9.0, color: theme::MUTED_TEXT },
+                        format!("[{}]", hotkey_hint(kind)),
+                        TextStyle { font: pixel_font.clone(), font_size: 12.0, color: theme::MUTED_TEXT },
                     ));
                 });
             }

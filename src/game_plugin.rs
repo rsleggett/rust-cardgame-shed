@@ -28,11 +28,12 @@ use crate::systems::play::{
 };
 use crate::systems::swap::{
     advance_swap_phase, ai_swap_system, handle_done_swap_button, handle_swap_input,
-    update_swap_button_visibility, DoneSwapButton, SwapState,
+    spawn_swap_hint, update_swap_button_visibility, update_swap_hint, DoneSwapButton, SwapState,
 };
 use crate::systems::visuals::update_card_face_up_state;
 use crate::theme;
 use crate::ui::game_over::{game_over_screen_system, restart_game_system};
+use crate::ui::info_overlay::{handle_info_buttons, spawn_info_controls, InfoPanelOpen};
 use crate::ui::pile_status::{update_pile_status_text, PileStatusText};
 use crate::ui::play_button::{
     depress_buttons, handle_play_button, update_play_button_style, PlayButton,
@@ -62,6 +63,7 @@ impl Plugin for GamePlugin {
             .insert_resource(HoveredCard::default())
             .insert_resource(LastClick::default())
             .insert_resource(InvalidFeedbackTimer::default())
+            .insert_resource(InfoPanelOpen::default())
             .insert_resource(MusicMuted::default())
             .add_event::<InvalidCardClicked>()
             .add_systems(Startup, (setup_game, setup_music))
@@ -105,9 +107,11 @@ impl Plugin for GamePlugin {
                 ai_swap_system,
                 advance_swap_phase,
                 update_swap_button_visibility,
+                update_swap_hint,
                 toggle_music_mute,
                 update_rules_info_panel,
                 apply_responsive_layout,
+                handle_info_buttons,
                 depress_buttons,
             ));
     }
@@ -201,7 +205,13 @@ fn setup_game(
     spawn_consumable_bar(&mut commands, ui_font.clone(), pixel_font.clone());
 
     spawn_score_hud(&mut commands, ui_font.clone(), pixel_font.clone());
-    spawn_rules_info_panel(&mut commands, ui_font, pixel_font);
+    spawn_rules_info_panel(&mut commands, ui_font.clone(), pixel_font.clone());
+
+    // Phone info overlay controls (hidden on wide screens by apply_responsive_layout).
+    spawn_info_controls(&mut commands, ui_font.clone());
+
+    // Top-centre swap-phase hint banner (shown only during Swap).
+    spawn_swap_hint(&mut commands, ui_font, pixel_font);
 
     info!("Game setup complete! Ready to deal cards.");
 }

@@ -98,7 +98,14 @@ pub fn set_turn(app: &mut App, seat: usize) {
 /// given selection. Returns when the system has completed and command buffers
 /// have been flushed.
 pub fn run_play_selection(app: &mut App, selection: Vec<Entity>) {
+    use shed::rendering::card_renderer::Layout;
     use shed::systems::play::play_selection;
+
+    // play_selection now reads the Layout resource (for orientation-aware pile
+    // geometry); the default landscape layout is fine for logic-only tests.
+    if !app.world().contains_resource::<Layout>() {
+        app.insert_resource(Layout::default());
+    }
 
     app.world_mut().run_system_once_with(
         selection,
@@ -106,8 +113,9 @@ pub fn run_play_selection(app: &mut App, selection: Vec<Entity>) {
          mut commands: Commands,
          mut game_state: ResMut<GameState>,
          cards: Query<&Card>,
-         transforms: Query<&GlobalTransform>| {
-            play_selection(&mut commands, &mut game_state, &cards, &transforms, &selection);
+         transforms: Query<&GlobalTransform>,
+         layout: Res<Layout>| {
+            play_selection(&mut commands, &mut game_state, &cards, &transforms, &layout, &selection);
         },
     );
 }

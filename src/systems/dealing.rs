@@ -4,7 +4,6 @@ use bevy::prelude::*;
 
 use crate::components::card::Card;
 use crate::components::game::{GamePhase, GameState};
-use crate::rendering::card_constants::PLAY_PILE_X;
 use crate::rendering::card_renderer::{CardAnimation, Layout};
 
 /// Seconds between dealing each card during round setup. 36 cards × this value
@@ -37,6 +36,7 @@ pub(crate) fn draw_first_card_system(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
     cards: Query<&Card>,
+    layout: Res<Layout>,
 ) {
     if game_state.phase == GamePhase::Playing
         && game_state.current_card.is_none()
@@ -51,8 +51,8 @@ pub(crate) fn draw_first_card_system(
             game_state.cards_in_play.push(card_entity);
 
             commands.entity(card_entity).insert(CardAnimation {
-                target_position: Vec3::new(PLAY_PILE_X, 0.0, 500.0),
-                start_position: Vec3::new(0.0, 0.0, 400.0),
+                target_position: Vec3::new(layout.play_pile_x(), 0.0, 500.0),
+                start_position: Vec3::new(layout.draw_pile_x(), 0.0, 400.0),
                 progress: 0.0,
                 speed: 2.0,
             });

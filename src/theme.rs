@@ -97,6 +97,17 @@ pub fn chunky_shadow(fill: Color) -> Color {
     Color::srgb(c.red * 0.55, c.green * 0.55, c.blue * 0.55)
 }
 
+/// Lightens a colour toward white by `t` (0.0 = unchanged, 1.0 = white). Used
+/// for hover states on solid-fill buttons where a darker shadow would read wrong.
+pub fn lighten(color: Color, t: f32) -> Color {
+    let c = color.to_srgba();
+    Color::srgb(
+        c.red + (1.0 - c.red) * t,
+        c.green + (1.0 - c.green) * t,
+        c.blue + (1.0 - c.blue) * t,
+    )
+}
+
 // ── Draft rarities ──────────────────────────────────────────────────────────
 #[derive(Clone, Copy)]
 pub enum Rarity {

@@ -210,14 +210,18 @@ pub(crate) fn draft_screen_system(
                                 border: UiRect::all(Val::Px(2.0)),
                                 ..default()
                             },
-                            background_color: theme::PANEL.into(),
-                            border_color: rcolor.into(),
+                            // Solid rarity fill so the row reads clearly over the
+                            // table cards behind the veil (was a translucent panel
+                            // that left white text illegible on light cards).
+                            background_color: rcolor.into(),
+                            border_color: theme::lighten(rcolor, 0.3).into(),
                             border_radius: BorderRadius::all(Val::Px(10.0)),
                             ..default()
                         },
                     ))
                     .with_children(|row| {
-                        // Icon chip (rarity-tinted square with the buff glyph).
+                        // Icon chip — a translucent dark square so the glyph stays
+                        // legible on the bright rarity fill.
                         row.spawn(NodeBundle {
                             style: Style {
                                 width: Val::Px(50.0),
@@ -226,14 +230,14 @@ pub(crate) fn draft_screen_system(
                                 justify_content: JustifyContent::Center,
                                 ..default()
                             },
-                            background_color: rcolor.with_alpha(0.20).into(),
+                            background_color: Color::srgba(0.0, 0.0, 0.0, 0.22).into(),
                             border_radius: BorderRadius::all(Val::Px(8.0)),
                             ..default()
                         })
                         .with_children(|chip| {
                             chip.spawn(TextBundle::from_section(
                                 theme::buff_icon(kind),
-                                TextStyle { font: pixel_font.clone(), font_size: 18.0, color: rcolor },
+                                TextStyle { font: pixel_font.clone(), font_size: 18.0, color: theme::CARD_INK },
                             ));
                         });
 
@@ -252,20 +256,25 @@ pub(crate) fn draft_screen_system(
                             } else {
                                 kind.display_name().to_string()
                             };
+                            // Dark text for contrast on the bright rarity fill.
                             col.spawn(TextBundle::from_section(
                                 name,
-                                TextStyle { font: ui_font.clone(), font_size: 19.0, color: Color::WHITE },
+                                TextStyle { font: ui_font.clone(), font_size: 19.0, color: theme::CARD_INK },
                             ));
                             col.spawn(TextBundle::from_section(
                                 rarity.label(),
-                                TextStyle { font: pixel_font.clone(), font_size: 14.0, color: rcolor },
+                                TextStyle {
+                                    font: pixel_font.clone(),
+                                    font_size: 14.0,
+                                    color: Color::srgba(0.09, 0.09, 0.125, 0.75),
+                                },
                             ));
                             col.spawn(TextBundle::from_section(
                                 kind.description(),
                                 TextStyle {
                                     font: ui_font.clone(),
                                     font_size: 13.0,
-                                    color: Color::srgba(1.0, 1.0, 1.0, 0.80),
+                                    color: Color::srgba(0.09, 0.09, 0.125, 0.88),
                                 },
                             ));
                         });
@@ -292,16 +301,17 @@ pub(crate) fn handle_draft_click(
         .flatten()
         .is_some();
     for (interaction, option, mut bg) in &mut interaction_q {
+        let rcolor = theme::buff_rarity(option.0).color();
         match *interaction {
             Interaction::Pressed => {
                 if !already_picked && !draft_state.picks.is_empty() {
                     draft_state.picks[0] = Some(option.0);
                     info!("You picked buff: {}", option.0.display_name());
                 }
-                *bg = theme::LIME.with_alpha(0.22).into();
+                *bg = theme::LIME.into();
             }
-            Interaction::Hovered => *bg = Color::srgba(1.0, 1.0, 1.0, 0.08).into(),
-            Interaction::None => *bg = theme::PANEL.into(),
+            Interaction::Hovered => *bg = theme::lighten(rcolor, 0.25).into(),
+            Interaction::None => *bg = rcolor.into(),
         }
     }
 }

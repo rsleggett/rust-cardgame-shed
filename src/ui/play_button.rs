@@ -5,9 +5,11 @@ use bevy::prelude::*;
 
 use crate::components::card::Card;
 use crate::components::game::{GamePhase, GameState};
+use crate::rendering::card_renderer::Layout;
 use crate::systems::consumables::ConsumableCard;
 use crate::systems::play::play_selection;
 use crate::theme;
+use crate::ui::info_overlay::{InfoButton, InfoCloseButton};
 
 #[derive(Component)]
 pub(crate) struct PlayButton;
@@ -17,6 +19,7 @@ pub(crate) fn handle_play_button(
     mut game_state: ResMut<GameState>,
     cards: Query<&Card>,
     transforms: Query<&GlobalTransform>,
+    layout: Res<Layout>,
     interaction_q: Query<&Interaction, (Changed<Interaction>, With<PlayButton>)>,
 ) {
     for interaction in &interaction_q {
@@ -26,7 +29,7 @@ pub(crate) fn handle_play_button(
             && !game_state.selected_cards.is_empty()
         {
             let selection = std::mem::take(&mut game_state.selected_cards);
-            play_selection(&mut commands, &mut game_state, &cards, &transforms, &selection);
+            play_selection(&mut commands, &mut game_state, &cards, &transforms, &layout, &selection);
         }
     }
 }
@@ -53,7 +56,13 @@ pub(crate) fn update_play_button_style(
 pub(crate) fn depress_buttons(
     mut button_q: Query<
         (&Interaction, &mut Style),
-        (Changed<Interaction>, With<Button>, Without<ConsumableCard>),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            Without<ConsumableCard>,
+            Without<InfoButton>,
+            Without<InfoCloseButton>,
+        ),
     >,
 ) {
     for (interaction, mut style) in button_q.iter_mut() {
