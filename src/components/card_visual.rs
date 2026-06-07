@@ -77,7 +77,7 @@ pub fn spawn_card_complete(
 
     let big = (CARD_HEIGHT * 0.30).round();
     let corner_rank = (CARD_HEIGHT * 0.16).round();
-    let corner_suit = (CARD_HEIGHT * 0.13).round();
+    let corner_suit = (CARD_HEIGHT * 0.17).round();
     let half_w = CARD_WIDTH / 2.0;
     let half_h = CARD_HEIGHT / 2.0;
 
@@ -207,10 +207,10 @@ pub fn spawn_card_complete(
                         SpriteBundle {
                             sprite: Sprite {
                                 color,
-                                custom_size: Some(Vec2::new(CARD_WIDTH - 18.0, 16.0)),
+                                custom_size: Some(Vec2::new(CARD_WIDTH - 12.0, 22.0)),
                                 ..default()
                             },
-                            transform: Transform::from_xyz(0.0, -half_h + 14.0, 0.5),
+                            transform: Transform::from_xyz(0.0, -half_h + 17.0, 0.5),
                             ..default()
                         },
                     ))
@@ -220,7 +220,7 @@ pub fn spawn_card_complete(
                                 label,
                                 TextStyle {
                                     font: pixel_font.clone(),
-                                    font_size: 9.0,
+                                    font_size: 13.0,
                                     color: Color::WHITE,
                                 },
                             ),

@@ -54,10 +54,10 @@ pub(crate) fn depress_buttons(
 ) {
     for (interaction, mut style) in button_q.iter_mut() {
         if *interaction == Interaction::Pressed {
-            style.bottom = Val::Px(7.0);
+            style.bottom = Val::Px(19.0);
             style.border = UiRect::bottom(Val::Px(0.0));
         } else {
-            style.bottom = Val::Px(12.0);
+            style.bottom = Val::Px(24.0);
             style.border = UiRect::bottom(Val::Px(5.0));
         }
     }

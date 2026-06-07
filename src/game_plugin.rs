@@ -218,7 +218,7 @@ pub(crate) fn spawn_chunky_button<M: Component>(
             ButtonBundle {
                 style: Style {
                     position_type: PositionType::Absolute,
-                    bottom: Val::Px(12.0),
+                    bottom: Val::Px(24.0),
                     left: Val::Percent(50.0),
                     margin: UiRect::left(Val::Px(-width / 2.0)),
                     width: Val::Px(width),
