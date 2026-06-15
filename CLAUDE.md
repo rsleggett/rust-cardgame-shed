@@ -9,14 +9,16 @@ A Rust implementation of the card game **Shed** using the [Bevy](https://bevyeng
 The visual + meta direction comes from the "Arcade Felt" design handoff (a Balatro-flavoured look plus an "Ante Ladder" meta-hook). It rolls out in phases:
 
 - **Phase 1 — Arcade Felt reskin (done):** restyle the existing game in place. Warm-paper cards with neon special badges + glow rings; dark-felt table with a gold inset frame; Rubik (UI/ranks) + Silkscreen (HUD/pixel) typography; chunky buttons; seat avatars + mood tags + active-seat ring; arcade juice (score pops, burn flash, button depress); pile-count badge. Pragmatic sprite approximation only — **no custom WGSL shaders**. Palette/helpers centralised in [`src/theme.rs`](src/theme.rs). No gameplay/rules/AI/state-machine changes.
-- **Phase 2 — Title / main-menu screen (planned):** a dedicated start screen before the table (play, settings incl. reduced-motion, etc.).
-- **Phase 3 — Ante Ladder meta-system (planned):** antes, stakes, and hazards layered over the match loop (per the handoff's `AnteSpecA`), with HUD wording shifting from "Round/First to N" to ante/stake labels.
+- **Phase 2 — Juice / game feel (done):** the handoff's motion + audio spec, layered onto Phase 1 without rules/AI/state changes. Card motion now eases out with a slight overshoot (`AnimCurve` on [`CardAnimation`](src/rendering/card_renderer.rs)); hover/stage is a springy lift (`CardLift`); pickup and burn animate instead of teleporting (the latter sweeping to a "burn pit" beside the pile); a special card resolving pulses a coloured ring (`PilePulse`) and the active-seat ring pops on turn change; the score pop rises from the pile. Full sound effects ([`src/sfx.rs`](src/sfx.rs), Kenney CC0, graceful-missing like the music). All motion honours the `ReducedMotion` resource, toggled at runtime with **Ctrl+R** (a stand-in until the settings screen).
+- **Phase 3 — Title / main-menu screen (planned):** a dedicated start screen before the table (play, settings incl. reduced-motion, etc.).
+- **Phase 4 — Ante Ladder meta-system (planned):** antes, stakes, and hazards layered over the match loop (per the handoff's `AnteSpecA`), with HUD wording shifting from "Round/First to N" to ante/stake labels.
 
 ## Build & Run
 
 ```bash
 ./scripts/download-fonts.sh  # one-time: fetch font assets (not tracked in git)
 ./scripts/download-music.sh  # optional: prints where to drop a lo-fi OGG track
+./scripts/download-sfx.sh    # one-time: fetch CC0 sound effects (not tracked in git)
 cargo run                    # run the game
 cargo build                  # build only
 cargo check                  # fast type-check without linking
@@ -60,6 +62,14 @@ it just creates `assets/music/` and prints suggested CC0 sources. Drop a
 lo-fi OGG at `assets/music/lofi_loop.ogg` to enable background music — the
 game runs silently if the file is missing (Bevy logs a one-line warning).
 
+Sound effects are gitignored too. `scripts/download-sfx.sh` fetches a handful
+of Kenney CC0 clips (WAV — the `wav` Bevy feature is enabled to decode them)
+into `assets/sfx/` and renames them to the canonical names [`src/sfx.rs`](src/sfx.rs)
+loads (`card_play`, `burn`, `pickup`, `deal`, `button`, `score`, `invalid`).
+Each clip is optional — a missing file just means that cue is silent. The web
+build ships silent (a missing clip on a static host would panic the decoder, so
+wasm skips SFX entirely, mirroring the music).
+
 ## Source Structure
 
 ```
@@ -68,21 +78,24 @@ src/
   lib.rs                         # Re-exports modules so tests/ can drive them
   game_plugin.rs                 # GamePlugin: resource registration, system wiring, setup_game
   audio.rs                       # BackgroundMusic, MusicMuted, setup_music, Ctrl+M toggle
+  sfx.rs                         # SfxKind/SfxEvent, Sfx bank, sfx_director (GameState-delta cues),
+                                 # button/invalid hooks, play_sfx (one-shot, graceful-missing)
   rules.rs                       # Pure predicates: can_play_card, is_burn (+ unit tests)
   theme.rs                       # "Arcade Felt" palette + helpers (single source of visual truth)
   ai.rs                          # Per-personality AI strategy (Rob / Mike / Dave)
   components/
     mod.rs
     card.rs                      # Card component, Suit, Rank
-    card_visual.rs               # CardBundle, spawn_card_complete, update_card_visuals
-                                 # (warm-paper faces, neon special badges + glow rings, neon back)
+    card_visual.rs               # CardBundle (incl. CardLift spring), spawn_card_complete,
+                                 # update_card_visuals (warm-paper faces, neon badges + glow rings, back)
     game.rs                      # GameState + Player; MatchState; Personality;
                                  # BuffKind, ActiveBuff; dealing logic (+ unit tests)
   rendering/
     mod.rs
-    card_renderer.rs             # CardRendererPlugin, CardAnimation, layout_cards; felt
-                                 # background + gold rim, seat avatars + mood tags +
-                                 # active-seat ring, pile-count badge, score-pop / burn-flash juice
+    card_renderer.rs             # CardRendererPlugin; CardAnimation (AnimCurve ease-out/overshoot),
+                                 # animate_card_lift, layout_cards; felt bg + gold rim, seat avatars
+                                 # + active-seat ring (RingPop on turn change), pile-count badge,
+                                 # burn pit, juice (score pop, PilePulse special/burn), Ctrl+R reduced-motion
     card_constants.rs            # Sizes, z-step, play-pile x, hand fan params
   systems/
     mod.rs
@@ -229,6 +242,7 @@ Pool generation excludes buffs the player already has. Consumables refresh each 
 | M | Use Mulligan (if drafted, once per round) |
 | P | Use Peek (if drafted, once per round) |
 | Ctrl+M | Toggle background-music mute |
+| Ctrl+R | Toggle reduced motion (degrades juice to instant) |
 | Any key on Game Over | Continue to next round / new match |
 
 ## AI Behaviour
@@ -245,7 +259,7 @@ Pool generation excludes buffs the player already has. Consumables refresh each 
 ## Known Gaps / Future Work
 
 - **Jack, Queen, Ace** still have no special behaviour (treated as normal high cards). Only the King has anything via the optional Wild Kings buff.
-- **Animation polish** — Phase 1 added the active-seat ring, pile-count badge, a "+N!" score pop on elimination, and a burn flash over the pile. Still teleporting: pickup (cards snap back to the hand) and burn cards (snap to discard); draft picks still have no fanfare.
+- **Animation polish** — Phase 2 added ease-out/overshoot card motion, a springy hover/stage lift, animated pickup (cards fly to the hand) and burn (cards sweep to a burn pit), special-resolve + turn-change pulses, a pile-rising score pop, and full SFX. Still flat: **draft picks** have no fanfare (the chosen perk doesn't animate to the buffs HUD), and the **deal** plays a single shuffle cue rather than a per-card riffle. Card **flip** (face-down→face-up) is still instant (dropped from the juice pass).
 - **AI draft picks are random** — personality-aware buff preferences (Mike hoards consumables, Dave picks chaotically) are a follow-up.
 - **AI doesn't display its picks** during draft — the overlay only shows the human's options.
 - **Big Hand visual gap** — AI hands rendering only allocates space for 3 cards; with Big Hand the 4th may overlap a sibling.

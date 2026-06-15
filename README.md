@@ -35,6 +35,7 @@ Built on the Bevy ECS (Entity Component System) game engine. The game features:
 - `src/rules.rs` — pure rule predicates (`can_play_card`, `is_burn`) with unit tests
 - `src/ai.rs` — per-personality AI strategy (`choose_play`)
 - `src/audio.rs` — background music + Ctrl+M mute toggle
+- `src/sfx.rs` — one-shot sound effects (GameState-delta cues + input hooks; CC0, graceful-missing)
 - `src/game_plugin.rs` — `GamePlugin`: resource registration, system wiring, one-time setup
 - `src/lib.rs` — re-exports modules so the integration tests can drive them
 - `src/main.rs` — application entry point (1440×900 window)
@@ -42,6 +43,7 @@ Built on the Bevy ECS (Entity Component System) game engine. The game features:
 - `src/theme.rs` — "Arcade Felt" palette + visual helpers (single source of style truth)
 - `scripts/download-fonts.sh` — fetches the font assets (Rubik, Titan One, Silkscreen, Noto suit glyphs; not tracked in git)
 - `scripts/download-music.sh` — sets up `assets/music/` and prints CC0 track sources (optional)
+- `scripts/download-sfx.sh` — fetches the CC0 sound effects (Kenney, WAV; not tracked in git)
 
 See [CLAUDE.md](CLAUDE.md) for an architecture overview and [DEVELOPMENT.md](DEVELOPMENT.md) for design notes, per-phase decisions, and outstanding work.
 
@@ -50,6 +52,7 @@ See [CLAUDE.md](CLAUDE.md) for an architecture overview and [DEVELOPMENT.md](DEV
 ```bash
 ./scripts/download-fonts.sh   # one-time: fetch Rubik + Silkscreen + Noto suit fonts into assets/fonts/
 ./scripts/download-music.sh   # optional: set up assets/music/ for background music
+./scripts/download-sfx.sh     # one-time: fetch CC0 sound effects into assets/sfx/
 cargo run
 cargo test                    # run the unit + integration test suite
 ```
@@ -98,6 +101,7 @@ mouse/keyboard.
 | M | Use Mulligan (if drafted, once per round) |
 | P | Use Peek (if drafted, once per round) |
 | Ctrl+M | Toggle background-music mute |
+| Ctrl+R | Toggle reduced motion (degrades juice to instant) |
 | Any key on Game Over | Continue to next round / new match |
 
 ## Match Loop
@@ -114,13 +118,14 @@ mouse/keyboard.
 The game's look and meta direction come from the "Arcade Felt" design handoff (a Balatro-flavoured style plus a future "Ante Ladder" meta-hook), rolled out in phases:
 
 - **Phase 1 — Arcade Felt reskin (done):** warm-paper cards with neon special badges + glow rings, a dark-felt table with a gold inset frame, Rubik + Silkscreen typography, chunky buttons, seat avatars with mood tags + an active-seat ring, arcade juice (score pops, burn flash, button depress), and a pile-count badge. Pure presentation — no gameplay changes — built with sprites/`bevy_ui` (no custom shaders). Palette lives in `src/theme.rs`.
-- **Phase 2 — Title / main-menu screen (planned):** a dedicated start screen with play + settings (including reduced-motion).
-- **Phase 3 — Ante Ladder meta-system (planned):** antes, stakes, and hazards layered over the match loop.
+- **Phase 2 — Juice / game feel (done):** ease-out + overshoot card motion, a springy hover/stage lift, animated pickup + burn (the latter sweeping to a "burn pit"), special-resolve and turn-change pulses, a pile-rising score pop, and full CC0 sound effects (`src/sfx.rs`). All motion honours a reduced-motion setting (Ctrl+R). No rules/AI/state changes.
+- **Phase 3 — Title / main-menu screen (planned):** a dedicated start screen with play + settings (including reduced-motion).
+- **Phase 4 — Ante Ladder meta-system (planned):** antes, stakes, and hazards layered over the match loop.
 
 ## Future Improvements
 
 ### Next iteration focus
-1. **Animation polish** — Phase 1 added the active-seat ring, the pile-count badge, score pops, and a burn flash; still to animate: pile pickups (currently teleport) and draft-pick fanfare.
+1. **Animation polish** — Phase 2 animated pickup, burn, the hover/stage lift, and the resolve/turn pulses, and added SFX; still flat: draft-pick fanfare (the chosen perk doesn't fly to the buffs HUD) and a per-card deal riffle (a single shuffle cue plays today). Card flip is still instant.
 2. **Core gameplay loop** — finish the special-card set (J, Q, A still vanilla), add persona-aware AI draft picks, expand the buff catalogue, surface what each AI drafted at round-end.
 
 ### Gameplay

@@ -84,6 +84,13 @@ pub(crate) fn update_rules_info_panel(
     game_state: Res<GameState>,
     mut text_q: Query<&mut Text, With<RulesInfoText>>,
 ) {
+    // The panel only changes when the human's buffs do (draft / consumable use),
+    // so skip the rebuild + Text re-layout on the idle frames where GameState
+    // didn't change.
+    if !game_state.is_changed() {
+        return;
+    }
+
     let Ok(mut text) = text_q.get_single_mut() else { return; };
 
     let mut body = String::from(RULES_LEGEND);
@@ -105,5 +112,7 @@ pub(crate) fn update_rules_info_panel(
         _ => body.push_str("\n(none yet - draft one each round)"),
     }
 
-    text.sections[1].value = body;
+    if text.sections[1].value != body {
+        text.sections[1].value = body;
+    }
 }

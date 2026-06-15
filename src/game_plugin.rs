@@ -6,6 +6,9 @@
 use bevy::prelude::*;
 
 use crate::audio::{setup_music, toggle_music_mute, MusicMuted};
+use crate::sfx::{
+    button_sfx, invalid_sfx, play_sfx, setup_sfx, sfx_director, SfxEvent,
+};
 use crate::components::game::{ActiveBuff, GameState, MatchState, Personality};
 use crate::rendering::card_constants::{CARD_HEIGHT, PLAY_PILE_X};
 use crate::rendering::card_renderer::CardRendererPlugin;
@@ -67,7 +70,8 @@ impl Plugin for GamePlugin {
             .insert_resource(InfoPanelOpen::default())
             .insert_resource(MusicMuted::default())
             .add_event::<InvalidCardClicked>()
-            .add_systems(Startup, (setup_game, setup_music))
+            .add_event::<SfxEvent>()
+            .add_systems(Startup, (setup_game, setup_music, setup_sfx))
             .add_systems(Update, (
                 update_hovered_card,
                 tick_last_click,
@@ -114,6 +118,14 @@ impl Plugin for GamePlugin {
                 apply_responsive_layout,
                 handle_info_buttons,
                 depress_buttons,
+            ))
+            .add_systems(Update, (
+                // Sound effects — derived from GameState deltas + a couple of
+                // input hooks, then fired as one-shot audio.
+                sfx_director,
+                button_sfx,
+                invalid_sfx,
+                play_sfx,
             ));
     }
 }

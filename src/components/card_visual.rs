@@ -40,9 +40,20 @@ pub struct BottomRightIndex;
 #[derive(Component)]
 pub struct BackElement;
 
+/// Spring state for a card's vertical lift (design-space px): `pos` is the
+/// current lift added to the resting position by `layout_cards`, `vel` the
+/// spring velocity. `animate_card_lift` drives `pos` toward a hover/stage
+/// target with a touch of overshoot, instead of an instant jump.
+#[derive(Component, Default)]
+pub struct CardLift {
+    pub pos: f32,
+    pub vel: f32,
+}
+
 #[derive(Bundle)]
 pub struct CardBundle {
     pub card: Card,
+    pub lift: CardLift,
     sprite_bundle: SpriteBundle,
 }
 
@@ -51,6 +62,7 @@ impl CardBundle {
         let card_color = if card.is_face_up { theme::CARD_PAPER } else { BACK_BASE };
         Self {
             card,
+            lift: CardLift::default(),
             sprite_bundle: SpriteBundle {
                 sprite: Sprite {
                     color: card_color,
@@ -295,7 +307,7 @@ pub fn update_card_visuals(
     };
 
     for (entity, card, mut sprite) in card_query.iter_mut() {
-        sprite.color = if card.invalid_timer > 0.0 {
+        let new_color = if card.invalid_timer > 0.0 {
             let intensity = (card.invalid_timer * 10.0).sin().abs();
             Color::srgb(1.0, 0.3 + 0.4 * intensity, 0.3 + 0.4 * intensity)
         } else if !card.is_face_up {
@@ -306,6 +318,11 @@ pub fn update_card_visuals(
         } else {
             theme::CARD_PAPER
         };
+        // Only assign when different — a `Mut<Sprite>` write marks the sprite
+        // dirty (a GPU re-upload on mobile WebGL), so skip it when unchanged.
+        if sprite.color != new_color {
+            sprite.color = new_color;
+        }
 
         let face_shown = card.is_face_up && card.show_text;
         let back_shown = !card.is_face_up;
@@ -332,7 +349,10 @@ pub fn update_card_visuals(
                 } else {
                     true // the static ink rim
                 };
-                *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
+                let new_vis = if show { Visibility::Inherited } else { Visibility::Hidden };
+                if *vis != new_vis {
+                    *vis = new_vis;
+                }
             }
         }
     }

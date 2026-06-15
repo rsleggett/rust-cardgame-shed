@@ -8,9 +8,9 @@ use bevy::prelude::*;
 
 use crate::components::card::Card;
 use crate::components::game::{BuffKind, GamePhase, GameState};
-use crate::rendering::card_renderer::Layout;
+use crate::rendering::card_renderer::{Layout, ReducedMotion};
 use crate::rules::can_play_card;
-use crate::systems::play::{pickup_cards_in_play, play_selection};
+use crate::systems::play::{animate_pickup, pickup_cards_in_play, play_selection};
 
 pub(crate) const AI_TICK_NORMAL: f32 = 1.5;
 pub(crate) const AI_TICK_SPECTATE: f32 = 0.3;
@@ -24,12 +24,14 @@ impl AITimer {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ai_player_system(
     mut commands: Commands,
     mut game_state: ResMut<GameState>,
     cards: Query<&Card>,
     transforms: Query<&GlobalTransform>,
     layout: Res<Layout>,
+    reduced: Res<ReducedMotion>,
     time: Res<Time>,
     mut ai_timer: ResMut<AITimer>,
 ) {
@@ -48,7 +50,8 @@ pub(crate) fn ai_player_system(
 
     if game_state.needs_to_pickup {
         let idx = game_state.current_player;
-        pickup_cards_in_play(&mut game_state, idx);
+        let picked = pickup_cards_in_play(&mut game_state, idx);
+        animate_pickup(&mut commands, &transforms, &layout, &game_state, reduced.0, idx, &picked);
         game_state.needs_to_pickup = false;
         game_state.advance_to_next_active();
         info!("AI {} picked up cards", idx);

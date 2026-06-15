@@ -50,12 +50,13 @@ pub(crate) fn draw_first_card_system(
             game_state.current_card = Some(card_entity);
             game_state.cards_in_play.push(card_entity);
 
-            commands.entity(card_entity).insert(CardAnimation {
-                target_position: Vec3::new(layout.play_pile_x(), 0.0, 500.0),
-                start_position: Vec3::new(layout.draw_pile_x(), 0.0, 400.0),
-                progress: 0.0,
-                speed: 2.0,
-            });
+            // Springy ease-out-back — the opening card snaps onto the pile with
+            // a slight overshoot. ~250ms at speed 4.0.
+            commands.entity(card_entity).insert(CardAnimation::springy(
+                Vec3::new(layout.draw_pile_x(), 0.0, 400.0),
+                Vec3::new(layout.play_pile_x(), 0.0, 500.0),
+                4.0,
+            ));
 
             info!("First card drawn and placed on table");
         }

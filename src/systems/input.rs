@@ -7,9 +7,9 @@ use bevy::prelude::*;
 use crate::components::card::Card;
 use crate::components::game::{BuffKind, GamePhase, GameState};
 use crate::rendering::card_constants::{CARD_HEIGHT, CARD_WIDTH};
-use crate::rendering::card_renderer::Layout;
+use crate::rendering::card_renderer::{Layout, ReducedMotion};
 use crate::rules::can_play_card;
-use crate::systems::play::{pickup_cards_in_play, play_selection};
+use crate::systems::play::{animate_pickup, pickup_cards_in_play, play_selection};
 
 /// Fires when the player clicks a card that cannot legally be played right now.
 #[derive(Event)]
@@ -122,6 +122,7 @@ pub(crate) fn handle_mouse_input(
     transforms: Query<&GlobalTransform>,
     camera_q: Query<(&Camera, &GlobalTransform)>,
     layout: Res<Layout>,
+    reduced: Res<ReducedMotion>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
     touches: Res<Touches>,
     mut invalid_ev: EventWriter<InvalidCardClicked>,
@@ -151,7 +152,8 @@ pub(crate) fn handle_mouse_input(
             && world_position.y <= hy;
         if in_pile {
             let current_player_index = game_state.current_player;
-            pickup_cards_in_play(&mut game_state, current_player_index);
+            let picked = pickup_cards_in_play(&mut game_state, current_player_index);
+            animate_pickup(&mut commands, &transforms, &layout, &game_state, reduced.0, current_player_index, &picked);
             game_state.needs_to_pickup = false;
             game_state.advance_to_next_active();
         }

@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = "0.14.2"
+# `wav` is added on top of the defaults (which already include `vorbis` for the
+# OGG music) so the Kenney CC0 sound effects — distributed as WAV — decode.
+bevy = { version = "0.14.2", features = ["wav"] }
 rand = "0.8.5"
 
 # On wasm32, rand's entropy source (getrandom) needs the `js` feature or
