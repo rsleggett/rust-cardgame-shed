@@ -492,12 +492,13 @@ impl GameState {
                     rotation: Quat::IDENTITY,
                     scale: Vec3::splat(scale),
                 },
-                CardAnimation {
+                // Smooth ease-out (no overshoot) — a dealt card settles into the
+                // fan/rows without sliding past its slot. ~280ms at speed 3.6.
+                CardAnimation::smooth(
+                    Vec3::new(0.0, 0.0, 0.0), // Start from centre (draw pile)
                     target_position,
-                    start_position: Vec3::new(0.0, 0.0, 0.0), // Start from centre (draw pile)
-                    progress: 0.0,
-                    speed: 2.0,
-                },
+                    3.6,
+                ),
             ));
         
         // Update the card's face-up state

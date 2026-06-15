@@ -14,3 +14,7 @@ assets/fonts/*.otf
 assets/music/*.ogg
 assets/music/*.mp3
 assets/music/*.wav
+
+# Sound-effect assets — fetched via scripts/download-sfx.sh
+assets/sfx/*.wav
+assets/sfx/*.ogg

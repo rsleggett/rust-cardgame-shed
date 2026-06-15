@@ -91,6 +91,12 @@ pub(crate) fn update_score_hud(
     game_state: Res<GameState>,
     mut text_q: Query<&mut Text, With<ScoreHudText>>,
 ) {
+    // Scores/round/buffs only change when GameState or MatchState does. Skip the
+    // string allocations + Text re-layout on the (many) idle frames in between.
+    if !match_state.is_changed() && !game_state.is_changed() {
+        return;
+    }
+
     let Ok(mut text) = text_q.get_single_mut() else { return; };
 
     let header = format!("Round {} · First to {}", match_state.round, match_state.target);

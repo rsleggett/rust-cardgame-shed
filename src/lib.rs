@@ -7,6 +7,7 @@ pub mod components;
 pub mod game_plugin;
 pub mod rendering;
 pub mod rules;
+pub mod sfx;
 pub mod theme;
 pub mod systems;
 pub mod ui;

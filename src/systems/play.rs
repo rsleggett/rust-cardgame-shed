@@ -6,7 +6,9 @@ use bevy::prelude::*;
 use crate::components::card::{Card, Rank};
 use crate::components::game::{BuffKind, GamePhase, GameState, Player};
 use crate::rendering::card_constants::Z_INDEX_STEP;
-use crate::rendering::card_renderer::{card_resting_transform, CardAnimation, Layout, SET_HAND};
+use crate::rendering::card_renderer::{
+    card_resting_transform, seat_anchor, CardAnimation, Layout, ReducedMotion, SET_HAND,
+};
 use crate::rules::{can_play_card, is_burn};
 
 pub fn has_valid_play(
@@ -49,7 +51,11 @@ pub(crate) fn target_hand_size(player: &Player) -> usize {
     if player.has_buff(BuffKind::BigHand) { 4 } else { 3 }
 }
 
-pub fn pickup_cards_in_play(game_state: &mut GameState, player_index: usize) {
+/// Moves the pile into `player_index`'s hand (Half Pickup discards the oldest
+/// half) and clears the pile-state flags. Returns the entities that went into
+/// the hand, so callers can animate them flying home (`animate_pickup`); the
+/// return is additive — tests that ignore it are unaffected.
+pub fn pickup_cards_in_play(game_state: &mut GameState, player_index: usize) -> Vec<Entity> {
     let half_pickup = game_state
         .players
         .get(player_index)
@@ -70,10 +76,9 @@ pub fn pickup_cards_in_play(game_state: &mut GameState, player_index: usize) {
             game_state.discard_pile.push(e);
         }
     }
+    let picked: Vec<Entity> = drained.collect();
     if let Some(player) = game_state.players.get_mut(player_index) {
-        for e in drained {
-            player.hand.push(e);
-        }
+        player.hand.extend(picked.iter().copied());
         if half_pickup {
             info!(
                 "Player {} picked up {} (Half Pickup: {} discarded)",
@@ -88,6 +93,40 @@ pub fn pickup_cards_in_play(game_state: &mut GameState, player_index: usize) {
     game_state.seven_active = false;
     game_state.any_card_playable = false;
     game_state.selected_cards.clear();
+    picked
+}
+
+/// Animates just-picked-up cards flying from the pile into their owner's hand
+/// (human → real fan slots; AI → a sweep toward the seat). Call right after
+/// `pickup_cards_in_play`, with the entities it returned. No-op under reduced
+/// motion or with nothing picked — `layout_cards` then snaps them as before.
+pub(crate) fn animate_pickup(
+    commands: &mut Commands,
+    transforms: &Query<&GlobalTransform>,
+    layout: &Layout,
+    game_state: &GameState,
+    reduced: bool,
+    player_index: usize,
+    picked: &[Entity],
+) {
+    if reduced || picked.is_empty() { return; }
+    let Some(player) = game_state.players.get(player_index) else { return; };
+    let hand_len = player.hand.len();
+    let base = hand_len.saturating_sub(picked.len());
+    for (k, &entity) in picked.iter().enumerate() {
+        let start = transforms.get(entity).map(|t| t.translation()).unwrap_or(Vec3::ZERO);
+        let target = if player_index == 0 {
+            // Human: fly to the exact fan slot the card now occupies (it was
+            // appended to the end of the hand), so layout_cards keeps it there.
+            let (t, _r, _s) = card_resting_transform(0, SET_HAND, base + k, hand_len, layout);
+            t
+        } else {
+            // AI hand is hidden/face-down — a sweep toward the seat reads fine.
+            let (tx, ty, _) = seat_anchor(player_index, layout.orientation);
+            Vec3::new(tx, ty, 200.0)
+        };
+        commands.entity(entity).insert(CardAnimation::smooth(start, target, 4.5));
+    }
 }
 
 /// Plays all selected cards at once. Handles 4-of-a-kind burn and all rank effects.
@@ -120,12 +159,13 @@ pub fn play_selection(
         game_state.current_card = Some(entity);
         let target_z = 500.0 + game_state.cards_in_play.len() as f32 * Z_INDEX_STEP;
         let start_pos = transforms.get(entity).map(|t| t.translation()).unwrap_or(Vec3::ZERO);
-        commands.entity(entity).insert(CardAnimation {
-            target_position: Vec3::new(pile_x, 0.0, target_z),
-            start_position: start_pos,
-            progress: 0.0,
-            speed: 3.0,
-        });
+        // Springy slam onto the pile — slight overshoot for arcade punch.
+        // ~200ms at speed 5.0.
+        commands.entity(entity).insert(CardAnimation::springy(
+            start_pos,
+            Vec3::new(pile_x, 0.0, target_z),
+            5.0,
+        ));
         // Remove from player's collection
         if let Some(player) = game_state.players.get_mut(playing_player) {
             if let Some(pos) = player.hand.iter().position(|&e| e == entity) {
@@ -197,8 +237,20 @@ pub fn play_selection(
         game_state.seven_active = false;
         game_state.any_card_playable = false;
         game_state.effective_rank = None;
-        let cards = std::mem::take(&mut game_state.cards_in_play);
-        game_state.discard_pile.extend(cards);
+        let burned = std::mem::take(&mut game_state.cards_in_play);
+        // Sweep the burned cards off the pile into the burn pit. Capture each
+        // start from its live transform before layout_cards relocates it; under
+        // reduced motion update_card_animations snaps them instantly.
+        let pit = layout.burn_pit();
+        for &entity in &burned {
+            let start = transforms.get(entity).map(|t| t.translation()).unwrap_or(Vec3::ZERO);
+            commands.entity(entity).insert(CardAnimation::smooth(
+                start,
+                Vec3::new(pit.x, pit.y, start.z),
+                4.0,
+            ));
+        }
+        game_state.discard_pile.extend(burned);
         game_state.current_card = None;
         info!("{:?} burned the pile (4-of-a-kind or 10), player {} goes again", rank, playing_player);
         if game_state.check_and_eliminate(playing_player) {
@@ -248,7 +300,11 @@ pub fn check_valid_plays_system(
 }
 
 pub(crate) fn handle_card_pickup_system(
+    mut commands: Commands,
     mut game_state: ResMut<GameState>,
+    transforms: Query<&GlobalTransform>,
+    layout: Res<Layout>,
+    reduced: Res<ReducedMotion>,
     keyboard: Res<ButtonInput<KeyCode>>,
 ) {
     if !game_state.needs_to_pickup || game_state.current_player != 0 {
@@ -256,7 +312,8 @@ pub(crate) fn handle_card_pickup_system(
     }
     if keyboard.just_pressed(KeyCode::Space) {
         let current_player_index = game_state.current_player;
-        pickup_cards_in_play(&mut game_state, current_player_index); // also clears selected_cards
+        let picked = pickup_cards_in_play(&mut game_state, current_player_index); // also clears selected_cards
+        animate_pickup(&mut commands, &transforms, &layout, &game_state, reduced.0, current_player_index, &picked);
         game_state.needs_to_pickup = false;
         game_state.advance_to_next_active();
         info!("Player picked up cards");
@@ -294,12 +351,13 @@ pub(crate) fn draw_refill_system(
         let hand_count = game_state.players[0].hand.len();
         let (target, _rot, _scale) =
             card_resting_transform(0, SET_HAND, hand_idx, hand_count, &layout);
-        commands.entity(new_card).insert(CardAnimation {
-            target_position: target,
-            start_position: draw_start,
-            progress: 0.0,
-            speed: 2.5,
-        });
+        // Smooth ease-out into the fan — no overshoot so it doesn't slide past
+        // its slot. ~280ms at speed 3.6.
+        commands.entity(new_card).insert(CardAnimation::smooth(
+            draw_start,
+            target,
+            3.6,
+        ));
     }
 
     game_state.pending_refill = false;

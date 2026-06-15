@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
+use crate::components::card::Card;
 use crate::components::game::{GameState, GamePhase, MatchState};
-use crate::components::card_visual::update_card_visuals;
+use crate::components::card_visual::{update_card_visuals, CardLift};
 use crate::rendering::card_constants::{CARD_WIDTH, CARD_HEIGHT, CARD_OVERLAP, Z_INDEX_STEP, PLAY_PILE_X, HAND_FAN_STEP, HAND_FAN_ANGLE, HAND_FAN_ARC, ACTION_BAR_CLEARANCE};
 use crate::systems::input::HoveredCard;
 use crate::theme;
@@ -16,12 +17,60 @@ pub struct ReducedMotion(pub bool);
 #[derive(Component)]
 pub struct PickupHighlight;
 
+/// Easing applied to a `CardAnimation`'s progress before the position lerp.
+/// `EaseOutBack` is the default "arcade" feel — a springy ease-out with a slight
+/// overshoot past the target that settles back. `EaseOut` is the no-overshoot
+/// variant for motions where landing past the mark reads wrong (a card flying
+/// into the fanned hand). `Linear` is the legacy straight glide.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum AnimCurve {
+    Linear,
+    EaseOut,
+    #[default]
+    EaseOutBack,
+}
+
+impl AnimCurve {
+    /// Maps a linear progress `t` in [0,1] through the curve. `EaseOutBack` can
+    /// briefly exceed 1.0 (the overshoot) before returning to exactly 1.0 at t=1.
+    pub fn apply(self, t: f32) -> f32 {
+        match self {
+            AnimCurve::Linear => t,
+            // Standard ease-out cubic.
+            AnimCurve::EaseOut => 1.0 - (1.0 - t).powi(3),
+            // Ease-out-back (Penner): overshoots then settles. The 1.70158
+            // constant is the classic ~10% overshoot.
+            AnimCurve::EaseOutBack => {
+                const C1: f32 = 1.70158;
+                const C3: f32 = C1 + 1.0;
+                let p = t - 1.0;
+                1.0 + C3 * p.powi(3) + C1 * p.powi(2)
+            }
+        }
+    }
+}
+
 #[derive(Component)]
 pub struct CardAnimation {
     pub target_position: Vec3,
     pub start_position: Vec3,
     pub progress: f32,
     pub speed: f32,
+    pub curve: AnimCurve,
+}
+
+impl CardAnimation {
+    /// A springy ease-out-back tween (the arcade default) from `start` to
+    /// `target`. `speed` is 1/duration_seconds — e.g. 5.0 ≈ 200ms.
+    pub fn springy(start: Vec3, target: Vec3, speed: f32) -> Self {
+        Self { start_position: start, target_position: target, progress: 0.0, speed, curve: AnimCurve::EaseOutBack }
+    }
+
+    /// A no-overshoot ease-out tween — for landings where overshoot reads wrong
+    /// (cards settling into the fanned hand).
+    pub fn smooth(start: Vec3, target: Vec3, speed: f32) -> Self {
+        Self { start_position: start, target_position: target, progress: 0.0, speed, curve: AnimCurve::EaseOut }
+    }
 }
 
 pub struct CardRendererPlugin;
@@ -34,6 +83,7 @@ impl Plugin for CardRendererPlugin {
            .add_systems(Update, (
                update_layout,
                update_card_animations,
+               animate_card_lift,
                layout_cards,
                update_card_visuals,
                update_pickup_highlight,
@@ -41,8 +91,11 @@ impl Plugin for CardRendererPlugin {
                manage_seat_avatars,
                update_pile_badge,
                update_floating_text,
-               update_burn_flash,
+               update_pile_pulse,
                detect_juice_events,
+               pop_active_ring,
+               update_ring_pop,
+               toggle_reduced_motion,
            ));
     }
 }
@@ -111,6 +164,18 @@ impl Layout {
         match self.orientation {
             Orientation::Landscape => 1.0,
             Orientation::Portrait => 1.25,
+        }
+    }
+
+    /// World-space centre of the "burn pit" — where burned cards sweep to and
+    /// the discard pile rests, offset from the play pile so a burn visibly
+    /// clears the table instead of vanishing under the next card. Sits in open
+    /// felt to the side of the pile in both orientations. (x, y only; callers
+    /// supply the z.)
+    pub fn burn_pit(&self) -> Vec2 {
+        match self.orientation {
+            Orientation::Landscape => Vec2::new(PLAY_PILE_X + 250.0, 175.0),
+            Orientation::Portrait => Vec2::new(225.0, 235.0),
         }
     }
 }
@@ -446,8 +511,8 @@ pub(crate) fn card_resting_transform(
 // System to layout cards based on game state
 fn layout_cards(
     game_state: Res<GameState>,
-    hovered: Res<HoveredCard>,
     layout: Res<Layout>,
+    lift_q: Query<&CardLift>,
     mut transform_query: Query<&mut Transform, Without<CardAnimation>>,
 ) {
     for (player_index, player) in game_state.players.iter().enumerate() {
@@ -457,9 +522,7 @@ fn layout_cards(
         for (i, &card_entity) in player.face_down_cards.iter().take(3).enumerate() {
             if let Ok(mut t) = transform_query.get_mut(card_entity) {
                 let (pos, rot, scale) = card_resting_transform(player_index, SET_FACE_DOWN, i, 0, &layout);
-                t.translation = pos;
-                t.rotation = rot;
-                t.scale = Vec3::splat(scale);
+                t.set_if_neq(Transform { translation: pos, rotation: rot, scale: Vec3::splat(scale) });
             }
         }
 
@@ -467,9 +530,7 @@ fn layout_cards(
         for (i, &card_entity) in player.face_up_cards.iter().take(3).enumerate() {
             if let Ok(mut t) = transform_query.get_mut(card_entity) {
                 let (pos, rot, scale) = card_resting_transform(player_index, SET_FACE_UP, i, 0, &layout);
-                t.translation = pos;
-                t.rotation = rot;
-                t.scale = Vec3::splat(scale);
+                t.set_if_neq(Transform { translation: pos, rotation: rot, scale: Vec3::splat(scale) });
             }
         }
 
@@ -479,15 +540,12 @@ fn layout_cards(
             if let Ok(mut t) = transform_query.get_mut(card_entity) {
                 let (mut pos, rot, scale) =
                     card_resting_transform(player_index, SET_HAND, i, hand_count, &layout);
-                // Raise hovered or selected cards toward the play area
-                if hovered.0 == Some(card_entity)
-                    || game_state.selected_cards.contains(&card_entity)
-                {
-                    pos.y += if is_bottom { 20.0 } else { -20.0 };
-                }
-                t.translation = pos;
-                t.rotation = rot;
-                t.scale = Vec3::splat(scale);
+                // Springy raise for hovered/staged cards — the eased lift is
+                // maintained per-card by animate_card_lift; we just add it here,
+                // toward the play area (sign flips for the bottom human seat).
+                let lift = lift_q.get(card_entity).map(|l| l.pos).unwrap_or(0.0);
+                pos.y += if is_bottom { lift } else { -lift };
+                t.set_if_neq(Transform { translation: pos, rotation: rot, scale: Vec3::splat(scale) });
             }
         }
     }
@@ -499,9 +557,8 @@ fn layout_cards(
     let draw_x = layout.draw_pile_x();
     for (i, &card_entity) in game_state.draw_pile.iter().enumerate() {
         if let Ok(mut t) = transform_query.get_mut(card_entity) {
-            t.translation = Vec3::new(draw_x, 0.0, 400.0 - i as f32 * Z_INDEX_STEP);
-            t.rotation = Quat::IDENTITY;
-            t.scale = Vec3::ONE;
+            let translation = Vec3::new(draw_x, 0.0, 400.0 - i as f32 * Z_INDEX_STEP);
+            t.set_if_neq(Transform { translation, rotation: Quat::IDENTITY, scale: Vec3::ONE });
         }
     }
 
@@ -511,18 +568,19 @@ fn layout_cards(
     for (i, &card_entity) in game_state.cards_in_play.iter().enumerate() {
         if let Ok(mut t) = transform_query.get_mut(card_entity) {
             let z_offset = (game_state.cards_in_play.len() - i - 1) as f32 * Z_INDEX_STEP;
-            t.translation = Vec3::new(pile_x, 0.0, base_z_play - z_offset);
-            t.rotation = Quat::IDENTITY;
-            t.scale = Vec3::splat(pile_scale);
+            let translation = Vec3::new(pile_x, 0.0, base_z_play - z_offset);
+            t.set_if_neq(Transform { translation, rotation: Quat::IDENTITY, scale: Vec3::splat(pile_scale) });
         }
     }
 
-    // Discard pile (burned cards sit under the play pile)
+    // Discard pile rests in the "burn pit" beside the play pile, so a burn
+    // sweeps the cards off the stack into a visible corner instead of hiding
+    // them under the next card.
+    let pit = layout.burn_pit();
     for (i, &card_entity) in game_state.discard_pile.iter().enumerate() {
         if let Ok(mut t) = transform_query.get_mut(card_entity) {
-            t.translation = Vec3::new(pile_x, 0.0, 450.0 - i as f32 * Z_INDEX_STEP);
-            t.rotation = Quat::IDENTITY;
-            t.scale = Vec3::splat(pile_scale);
+            let translation = Vec3::new(pit.x, pit.y, 450.0 - i as f32 * Z_INDEX_STEP);
+            t.set_if_neq(Transform { translation, rotation: Quat::IDENTITY, scale: Vec3::splat(pile_scale) });
         }
     }
 }
@@ -533,25 +591,84 @@ fn layout_cards(
 /// be reverted by restoring the positioning logic from git history.
 fn update_turn_chip(mut chip_q: Query<&mut Visibility, With<TurnChip>>) {
     if let Ok(mut vis) = chip_q.get_single_mut() {
-        *vis = Visibility::Hidden;
+        // Spawned hidden; only write if something flipped it (it never does).
+        // Guarding avoids dirtying the chip + its mesh children every frame.
+        if *vis != Visibility::Hidden {
+            *vis = Visibility::Hidden;
+        }
     }
 }
 
-// System to update card animations
+// System to update card animations. Progress advances linearly with time, but
+// is mapped through the per-animation `curve` before the position lerp so cards
+// land with a snappy ease-out (and a slight overshoot, for `EaseOutBack`).
+// Reduced motion snaps straight to the target.
 fn update_card_animations(
     mut commands: Commands,
     time: Res<Time>,
+    reduced: Res<ReducedMotion>,
     mut query: Query<(Entity, &mut Transform, &mut CardAnimation)>,
 ) {
     for (entity, mut transform, mut animation) in query.iter_mut() {
+        if reduced.0 {
+            transform.translation = animation.target_position;
+            commands.entity(entity).remove::<CardAnimation>();
+            continue;
+        }
         animation.progress = (animation.progress + animation.speed * time.delta_seconds()).min(1.0);
+        let eased = animation.curve.apply(animation.progress);
         transform.translation = animation.start_position.lerp(
             animation.target_position,
-            animation.progress,
+            eased,
         );
         if animation.progress >= 1.0 {
             commands.entity(entity).remove::<CardAnimation>();
         }
+    }
+}
+
+/// Target vertical lift (design-space px) for a hovered or staged hand card.
+pub(crate) const CARD_LIFT_RAISE: f32 = 22.0;
+
+/// Drives each card's `CardLift` spring toward its hover/stage target so the
+/// raise eases in with a slight overshoot rather than snapping. A card is
+/// "raised" when it's the hovered card or part of the staged selection. Reduced
+/// motion snaps straight to the target.
+fn animate_card_lift(
+    time: Res<Time>,
+    hovered: Res<HoveredCard>,
+    game_state: Res<GameState>,
+    reduced: Res<ReducedMotion>,
+    mut q: Query<(Entity, &mut CardLift)>,
+) {
+    let dt = time.delta_seconds().min(1.0 / 30.0); // clamp for spring stability on hitches
+    // Underdamped spring (damping < critical) for a small settle-overshoot.
+    const K: f32 = 520.0; // stiffness
+    const D: f32 = 28.0; // damping
+    const REST: f32 = 0.01; // px / px·s⁻¹ below which we treat the spring as settled
+    for (entity, mut lift) in q.iter_mut() {
+        let raised = hovered.0 == Some(entity) || game_state.selected_cards.contains(&entity);
+        let target = if raised { CARD_LIFT_RAISE } else { 0.0 };
+        if reduced.0 {
+            if lift.pos != target || lift.vel != 0.0 {
+                lift.pos = target;
+                lift.vel = 0.0;
+            }
+            continue;
+        }
+        // Settled at rest with nothing to chase → skip the write entirely, so the
+        // ~52 idle cards stay out of change detection (and out of layout_cards'
+        // dirtying). Only the 1–3 cards actually lifting integrate each frame.
+        if !raised && lift.pos.abs() < REST && lift.vel.abs() < REST {
+            if lift.pos != 0.0 || lift.vel != 0.0 {
+                lift.pos = 0.0;
+                lift.vel = 0.0;
+            }
+            continue;
+        }
+        let accel = (target - lift.pos) * K - lift.vel * D;
+        lift.vel += accel * dt;
+        lift.pos += lift.vel * dt;
     }
 }
 
@@ -567,6 +684,62 @@ pub struct SeatAvatar(pub usize);
 /// Gold glow ring behind a seat's avatar, shown only on that seat's turn.
 #[derive(Component)]
 pub struct SeatRing(pub usize);
+
+/// Transient pop animation on a `SeatRing`: when a seat becomes active its ring
+/// scales in from large and settles with a slight overshoot. Removed when done.
+#[derive(Component)]
+pub struct RingPop {
+    age: f32,
+}
+
+const RING_POP_TTL: f32 = 0.34;
+
+/// On a turn change, kick the newly-active seat's ring into a scale-pop. The
+/// human (seat 0) has no avatar/ring, so only AI seats pop — fine, the human's
+/// turn is signalled by the interactive hand. Honors reduced motion.
+fn pop_active_ring(
+    mut commands: Commands,
+    game_state: Res<GameState>,
+    reduced: Res<ReducedMotion>,
+    ring_q: Query<(Entity, &SeatRing)>,
+    mut last_active: Local<usize>,
+) {
+    let active = game_state.current_player;
+    if active == *last_active {
+        return;
+    }
+    *last_active = active;
+    let playing = game_state.phase == GamePhase::Playing
+        && !game_state.finish_order.contains(&active);
+    if !playing || reduced.0 {
+        return;
+    }
+    for (entity, ring) in ring_q.iter() {
+        if ring.0 == active {
+            commands.entity(entity).insert(RingPop { age: 0.0 });
+        }
+    }
+}
+
+/// Drives the `RingPop` scale from ~1.5 down to 1.0 with an ease-out-back
+/// overshoot, then removes itself.
+fn update_ring_pop(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut Transform, &mut RingPop)>,
+) {
+    for (entity, mut transform, mut pop) in q.iter_mut() {
+        pop.age += time.delta_seconds();
+        let frac = (pop.age / RING_POP_TTL).clamp(0.0, 1.0);
+        let eased = AnimCurve::EaseOutBack.apply(frac);
+        // 1.5 → 1.0; EaseOutBack dips past 1.0 then settles (the overshoot).
+        transform.scale = Vec3::splat(1.5 + (1.0 - 1.5) * eased);
+        if pop.age >= RING_POP_TTL {
+            transform.scale = Vec3::ONE;
+            commands.entity(entity).remove::<RingPop>();
+        }
+    }
+}
 
 /// Computes the design-space anchor for seat `seat`'s avatar cluster — sat above
 /// the seat's card block, scaled with the seat.
@@ -671,23 +844,30 @@ fn manage_seat_avatars(
         return; // positions/ring handled next frame once entities exist
     }
 
-    // Reposition every avatar above its seat (orientation may have flipped).
-    for (avatar, mut transform) in avatar_q.iter_mut() {
-        let scale = avatar_scale(avatar.0, layout.orientation);
-        transform.translation = avatar_anchor(avatar.0, &layout);
-        transform.scale = Vec3::splat(scale);
+    // Avatar anchors only move on an orientation flip — reposition only then,
+    // so we don't dirty three avatar transforms (each with mesh children) every
+    // frame.
+    if layout.is_changed() {
+        for (avatar, mut transform) in avatar_q.iter_mut() {
+            let scale = avatar_scale(avatar.0, layout.orientation);
+            transform.translation = avatar_anchor(avatar.0, &layout);
+            transform.scale = Vec3::splat(scale);
+        }
     }
 
-    // Light the gold ring on the active seat only.
+    // Light the gold ring on the active seat only (write only on change).
     let active_seat = game_state.current_player;
     let playing = game_state.phase == GamePhase::Playing
         && !game_state.finish_order.contains(&active_seat);
     for (ring, mut vis) in ring_q.iter_mut() {
-        *vis = if playing && ring.0 == active_seat {
+        let new_vis = if playing && ring.0 == active_seat {
             Visibility::Visible
         } else {
             Visibility::Hidden
         };
+        if *vis != new_vis {
+            *vis = new_vis;
+        }
     }
 }
 
@@ -710,10 +890,16 @@ fn update_pile_badge(
     let count = game_state.cards_in_play.len();
     let pile_scale = layout.pile_scale();
     if let Ok((mut vis, mut tf)) = badge_q.get_single_mut() {
-        *vis = if count > 0 { Visibility::Visible } else { Visibility::Hidden };
-        tf.translation.x = layout.play_pile_x() + (CARD_WIDTH / 2.0 + 16.0) * pile_scale;
-        tf.translation.y = (CARD_HEIGHT / 2.0 - 4.0) * pile_scale;
-        tf.scale = Vec3::splat(pile_scale);
+        let new_vis = if count > 0 { Visibility::Visible } else { Visibility::Hidden };
+        if *vis != new_vis {
+            *vis = new_vis;
+        }
+        // Badge position is orientation-only — write it only on a layout flip.
+        if layout.is_changed() {
+            tf.translation.x = layout.play_pile_x() + (CARD_WIDTH / 2.0 + 16.0) * pile_scale;
+            tf.translation.y = (CARD_HEIGHT / 2.0 - 4.0) * pile_scale;
+            tf.scale = Vec3::splat(pile_scale);
+        }
     }
     if let Ok(mut text) = text_q.get_single_mut() {
         let label = format!("\u{00D7}{}", count);
@@ -732,11 +918,42 @@ pub struct FloatingText {
     ttl: f32,
 }
 
-/// A short-lived flash sprite over the pile when it burns.
+/// A short-lived sprite over the pile that scales up and fades out. Shared by
+/// the burn flash and the special-resolve pulse — only the colour/size/grow
+/// differ at spawn.
 #[derive(Component)]
-pub struct BurnFlash {
+pub struct PilePulse {
     age: f32,
     ttl: f32,
+    start_alpha: f32,
+    /// Extra scale (on top of the pile's base scale) reached at end of life.
+    grow: f32,
+}
+
+/// Spawns a `PilePulse` centred on the play pile. `size` is the un-scaled sprite
+/// size; the pulse scales with the pile and grows toward `grow` while fading.
+fn spawn_pile_pulse(
+    commands: &mut Commands,
+    layout: &Layout,
+    color: Color,
+    size: Vec2,
+    start_alpha: f32,
+    ttl: f32,
+    grow: f32,
+) {
+    commands.spawn((
+        PilePulse { age: 0.0, ttl, start_alpha, grow },
+        SpriteBundle {
+            sprite: Sprite {
+                color: color.with_alpha(start_alpha),
+                custom_size: Some(size),
+                ..default()
+            },
+            transform: Transform::from_xyz(layout.play_pile_x(), 0.0, 615.0)
+                .with_scale(Vec3::splat(layout.pile_scale())),
+            ..default()
+        },
+    ));
 }
 
 fn update_floating_text(
@@ -758,63 +975,71 @@ fn update_floating_text(
     }
 }
 
-fn update_burn_flash(
+fn update_pile_pulse(
     mut commands: Commands,
     time: Res<Time>,
-    mut q: Query<(Entity, &mut Sprite, &mut BurnFlash)>,
+    layout: Res<Layout>,
+    mut q: Query<(Entity, &mut Sprite, &mut Transform, &mut PilePulse)>,
 ) {
-    for (entity, mut sprite, mut flash) in q.iter_mut() {
-        flash.age += time.delta_seconds();
-        let frac = (flash.age / flash.ttl).clamp(0.0, 1.0);
-        sprite.color = sprite.color.with_alpha(0.7 * (1.0 - frac));
-        if flash.age >= flash.ttl {
+    let base = layout.pile_scale();
+    for (entity, mut sprite, mut transform, mut pulse) in q.iter_mut() {
+        pulse.age += time.delta_seconds();
+        let frac = (pulse.age / pulse.ttl).clamp(0.0, 1.0);
+        let ease = 1.0 - (1.0 - frac).powi(2); // ease-out
+        sprite.color = sprite.color.with_alpha(pulse.start_alpha * (1.0 - frac));
+        transform.scale = Vec3::splat(base * (1.0 + pulse.grow * ease));
+        if pulse.age >= pulse.ttl {
             commands.entity(entity).despawn_recursive();
         }
     }
 }
 
-/// Watches round state for two presentational events without touching gameplay:
-/// a new finisher (spawn a lime "+N!" pop at their seat) and the discard pile
-/// growing (a burn just happened — flash the pile). Tracked via `Local` so we
-/// only fire on the frame the count changes.
+/// Watches round state for presentational events without touching gameplay:
+/// a new finisher (lime "+N!" pop at the pile), the discard pile growing (a
+/// burn — amber flash) and a special card landing on the pile (a coloured
+/// resolve pulse). Tracked via `Local`s so each fires only on the frame its
+/// count changes.
+#[allow(clippy::too_many_arguments)]
 fn detect_juice_events(
     mut commands: Commands,
     game_state: Res<GameState>,
     layout: Res<Layout>,
     reduced: Res<ReducedMotion>,
+    cards: Query<&Card>,
     asset_server: Res<AssetServer>,
     mut last_finished: Local<usize>,
     mut last_discard: Local<usize>,
+    mut last_in_play: Local<usize>,
 ) {
     let finished = game_state.finish_order.len();
     let discard = game_state.discard_pile.len();
+    let in_play = game_state.cards_in_play.len();
 
-    // New round (counts reset) — resync without firing.
-    if finished < *last_finished {
-        *last_finished = finished;
-    }
-    if discard < *last_discard {
-        *last_discard = discard;
-    }
+    // Counts reset between plays/rounds — resync without firing.
+    if finished < *last_finished { *last_finished = finished; }
+    if discard < *last_discard { *last_discard = discard; }
+    if in_play < *last_in_play { *last_in_play = in_play; }
 
     if !reduced.0 {
-        // One pop per newly-eliminated seat.
+        let pile_x = layout.play_pile_x();
+
+        // One pop per newly-eliminated seat, rising from the pile (handoff).
         if finished > *last_finished {
             let total = game_state.players.len();
             let pixel_font = asset_server.load("fonts/Silkscreen-Regular.ttf");
             for pos in *last_finished..finished {
-                let seat = game_state.finish_order[pos];
                 let pts = MatchState::score_for_position(pos, total);
                 let label = if pts > 0 { format!("+{}!", pts) } else { "SHED!".to_string() };
-                let (table_x, face_y, _) = seat_anchor(seat, layout.orientation);
+                // Small horizontal jitter so stacked finishes don't overlap.
+                let jitter = (pos as f32 - 1.5) * 26.0;
                 commands.spawn((
                     FloatingText { age: 0.0, ttl: 0.75 },
                     Text2dBundle {
                         text: Text::from_section(
                             label,
-                            TextStyle { font: pixel_font.clone(), font_size: 22.0, color: theme::LIME },
+                            TextStyle { font: pixel_font.clone(), font_size: 26.0, color: theme::LIME },
                         ),
-                        transform: Transform::from_xyz(table_x, face_y, 660.0)
+                        transform: Transform::from_xyz(pile_x + jitter, CARD_HEIGHT * 0.5 + 30.0, 660.0)
                             .with_rotation(Quat::from_rotation_z((-8.0_f32).to_radians())),
                         ..default()
                     },
@@ -822,26 +1047,59 @@ fn detect_juice_events(
             }
         }
 
-        // Pile burned (cards moved to discard).
+        // Pile burned (cards moved to discard) — amber flash that scales up.
         if discard > *last_discard {
-            commands.spawn((
-                BurnFlash { age: 0.0, ttl: 0.35 },
-                SpriteBundle {
-                    sprite: Sprite {
-                        color: Color::srgba(1.0, 0.85, 0.4, 0.7),
-                        custom_size: Some(Vec2::new(CARD_WIDTH + 30.0, CARD_HEIGHT + 30.0)),
-                        ..default()
-                    },
-                    transform: Transform::from_xyz(layout.play_pile_x(), 0.0, 615.0)
-                        .with_scale(Vec3::splat(layout.pile_scale())),
-                    ..default()
-                },
-            ));
+            spawn_pile_pulse(
+                &mut commands,
+                &layout,
+                Color::srgb(1.0, 0.85, 0.4),
+                Vec2::new(CARD_WIDTH + 30.0, CARD_HEIGHT + 30.0),
+                0.75,
+                0.35,
+                0.45,
+            );
+        }
+
+        // A special card just landed on top of a grown pile — pulse a ring in
+        // its colour as it resolves. (Burns clear the pile, so that path falls
+        // through to the flash above instead.)
+        if in_play > *last_in_play {
+            if let Some(&top) = game_state.cards_in_play.last() {
+                if let Ok(card) = cards.get(top) {
+                    if let Some(color) = theme::special_color(card.rank) {
+                        spawn_pile_pulse(
+                            &mut commands,
+                            &layout,
+                            color,
+                            Vec2::new(CARD_WIDTH + 18.0, CARD_HEIGHT + 18.0),
+                            0.6,
+                            0.3,
+                            0.5,
+                        );
+                    }
+                }
+            }
         }
     }
 
     *last_finished = finished;
     *last_discard = discard;
+    *last_in_play = in_play;
+}
+
+/// Ctrl+R flips the reduced-motion setting at runtime (a stand-in until the
+/// settings/title screen lands). Ctrl-guarded like the Ctrl+M music toggle so a
+/// bare R never collides with future bindings. SFX are unaffected — this only
+/// gates motion juice.
+fn toggle_reduced_motion(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut reduced: ResMut<ReducedMotion>,
+) {
+    let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    if ctrl && keys.just_pressed(KeyCode::KeyR) {
+        reduced.0 = !reduced.0;
+        info!("Reduced motion {}", if reduced.0 { "ON" } else { "OFF" });
+    }
 }
 
 // Pulse the pickup highlight when the human player needs to pick up cards
@@ -856,13 +1114,19 @@ fn update_pickup_highlight(
         && game_state.phase == GamePhase::Playing;
 
     for (mut vis, mut sprite, mut tf) in &mut query {
-        tf.translation.x = layout.play_pile_x();
-        tf.scale = Vec3::splat(layout.pile_scale());
+        // Position is orientation-only; the alpha pulse below is the genuine
+        // per-frame animation (and only while the prompt is shown).
+        if layout.is_changed() {
+            tf.translation.x = layout.play_pile_x();
+            tf.scale = Vec3::splat(layout.pile_scale());
+        }
         if show {
-            *vis = Visibility::Visible;
+            if *vis != Visibility::Visible {
+                *vis = Visibility::Visible;
+            }
             let alpha = 0.4 + 0.35 * (time.elapsed_seconds() * 4.0).sin();
             sprite.color = Color::srgba(1.0, 0.75, 0.0, alpha);
-        } else {
+        } else if *vis != Visibility::Hidden {
             *vis = Visibility::Hidden;
         }
     }

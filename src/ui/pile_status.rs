@@ -21,13 +21,15 @@ pub(crate) fn update_pile_status_text(
 ) {
     let Ok((mut text, mut transform)) = text_q.get_single_mut() else { return; };
 
-    // Keep the prompt parked above the play pile in either orientation, scaled
-    // to match the (larger) portrait pile.
-    let pile_scale = layout.pile_scale();
-    transform.translation.x = layout.play_pile_x();
-    transform.translation.y = (CARD_HEIGHT / 2.0 + 24.0) * pile_scale;
-    // Grow the prompt with the (larger) portrait pile so it reads on a phone.
-    transform.scale = Vec3::splat(pile_scale);
+    // Position/scale only change on an orientation flip — write them only then,
+    // so the text entity isn't dirtied (and re-laid-out) every frame.
+    if layout.is_changed() {
+        let pile_scale = layout.pile_scale();
+        transform.translation.x = layout.play_pile_x();
+        transform.translation.y = (CARD_HEIGHT / 2.0 + 24.0) * pile_scale;
+        // Grow the prompt with the (larger) portrait pile so it reads on a phone.
+        transform.scale = Vec3::splat(pile_scale);
+    }
 
     if feedback.0 > 0.0 {
         feedback.0 = (feedback.0 - time.delta_seconds()).max(0.0);
@@ -50,10 +52,17 @@ pub(crate) fn update_pile_status_text(
         format!(">> YOUR TURN - {}", prompt)
     };
 
-    text.sections[0].value = msg;
-    text.sections[0].style.color = if feedback.0 > 0.0 {
+    // Only write when changed — a Text mutation forces a glyph re-layout, so
+    // skipping unchanged frames is the win on mobile.
+    if text.sections[0].value != msg {
+        text.sections[0].value = msg;
+    }
+    let new_color = if feedback.0 > 0.0 {
         Color::srgb(1.0, 0.5, 0.0) // orange highlight on invalid play
     } else {
         theme::GOLD
     };
+    if text.sections[0].style.color != new_color {
+        text.sections[0].style.color = new_color;
+    }
 }
