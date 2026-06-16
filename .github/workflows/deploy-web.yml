@@ -41,6 +41,9 @@ jobs:
       - name: Fetch fonts (gitignored — provisioned at build time)
         run: ./scripts/download-fonts.sh
 
+      - name: Fetch sound effects (gitignored — bundled into the web build)
+        run: ./scripts/download-sfx.sh
+
       - name: Build web bundle
         # Pages project site serves from /<repo>/, so the public URL must match
         # or the wasm/js/asset URLs 404.

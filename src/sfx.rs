@@ -64,11 +64,13 @@ impl Sfx {
     }
 }
 
-/// Loads the SFX bank on startup. Native only — on a static web host a missing
-/// OGG is served as the SPA HTML fallback, which `bevy_audio` then panics on
-/// while decoding (same hazard documented for the music). So the web build
-/// ships silent (see the wasm stub below).
-#[cfg(not(target_arch = "wasm32"))]
+/// Loads the SFX bank on startup. Runs on both native and web: the clips are
+/// bundled into the web build too (CI runs `scripts/download-sfx.sh` before
+/// `trunk build`, and `index.html` copies `assets/` into `dist/`). A missing
+/// clip stays graceful on native; on a static host the files must actually be
+/// present (CI guarantees this) — otherwise the decoder chokes on the SPA
+/// fallback. The browser autoplay policy is handled by the AudioContext-resume
+/// snippet in `index.html`.
 pub(crate) fn setup_sfx(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(Sfx {
         card_play: asset_server.load("sfx/card_play.wav"),
@@ -81,13 +83,8 @@ pub(crate) fn setup_sfx(mut commands: Commands, asset_server: Res<AssetServer>) 
     });
 }
 
-/// Web build: ship silent (see `play_sfx` below) — no bank to load.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn setup_sfx() {}
-
 /// Spawns a one-shot audio entity per `SfxEvent`, despawning itself when the
-/// clip finishes. Native only — the wasm stub drains the events silently.
-#[cfg(not(target_arch = "wasm32"))]
+/// clip finishes. Runs on native and web alike.
 pub(crate) fn play_sfx(
     mut commands: Commands,
     mut events: EventReader<SfxEvent>,
@@ -100,13 +97,6 @@ pub(crate) fn play_sfx(
             settings: PlaybackSettings::DESPAWN.with_volume(Volume::new(SFX_VOLUME)),
         });
     }
-}
-
-/// Web build: no SFX assets are bundled (a missing OGG on a static host decodes
-/// to a panic), so just drain the events and stay silent.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn play_sfx(mut events: EventReader<SfxEvent>) {
-    events.clear();
 }
 
 /// Derives play / burn / pickup / score / deal cues from `GameState` deltas,

@@ -45,8 +45,10 @@ web-only fields (`canvas`, `fit_canvas_to_parent`) that are ignored natively.
 `rand::random()` works in the browser. CI builds with
 `--public-url "/rust-cardgame-shed/"` because GitHub Pages serves the project
 site from a subpath; `trunk serve` defaults to `/`. The push-to-`master` deploy
-lives in `.github/workflows/deploy-web.yml`. The web build ships silent (no
-bundled OGG). **One-time repo setup:** Settings → Pages → Source = "GitHub Actions".
+lives in `.github/workflows/deploy-web.yml` (which fetches fonts **and** sound
+effects before `trunk build` so both are bundled). The web build has **sound
+effects** but no **music** (no bundled OGG track). **One-time repo setup:**
+Settings → Pages → Source = "GitHub Actions".
 
 The build is playable on phones, in both orientations and by touch. The layout
 is **orientation-aware** (see "Responsive sizing" under Key Architecture Notes):
@@ -66,9 +68,14 @@ Sound effects are gitignored too. `scripts/download-sfx.sh` fetches a handful
 of Kenney CC0 clips (WAV — the `wav` Bevy feature is enabled to decode them)
 into `assets/sfx/` and renames them to the canonical names [`src/sfx.rs`](src/sfx.rs)
 loads (`card_play`, `burn`, `pickup`, `deal`, `button`, `score`, `invalid`).
-Each clip is optional — a missing file just means that cue is silent. The web
-build ships silent (a missing clip on a static host would panic the decoder, so
-wasm skips SFX entirely, mirroring the music).
+On **native** each clip is optional — a missing file just means that cue is
+silent. SFX also play on the **web** build: CI runs `download-sfx.sh` before
+`trunk build` so the clips are bundled into `dist/`, and `index.html` proxies
+the `AudioContext` constructor to resume audio on the first user interaction
+(the browser autoplay policy starts it suspended). The clips must actually be
+present for a web build (run `download-sfx.sh` before `trunk serve` locally) —
+a missing file served as the SPA fallback would choke the decoder. Music is
+still web-silent (no bundled OGG track).
 
 ## Source Structure
 
