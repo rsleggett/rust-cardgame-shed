@@ -5,6 +5,55 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Shed</title>
 
+    <!--
+      Browsers block the Web Audio API until a user gesture and start every
+      AudioContext suspended, so cards/burns/etc. would stay silent on the web
+      build. This runs BEFORE the wasm module instantiates its AudioContext: it
+      proxies the AudioContext constructor to track every instance Bevy/cpal
+      creates, then resumes them on the first user interaction and unhooks
+      itself. (Standard bevy_game_template approach.)
+    -->
+    <script>
+      (function () {
+        const audioContextList = [];
+        const Original = self.AudioContext;
+        if (!Original) return;
+        self.AudioContext = new Proxy(Original, {
+          construct(target, args) {
+            const ctx = new target(...args);
+            audioContextList.push(ctx);
+            return ctx;
+          },
+        });
+
+        const userInputEventNames = [
+          "click", "contextmenu", "auxclick", "dblclick", "mousedown",
+          "mouseup", "pointerup", "touchend", "keydown", "keyup",
+        ];
+
+        function resumeAllContexts() {
+          let running = 0;
+          audioContextList.forEach((ctx) => {
+            if (ctx.state !== "running") {
+              ctx.resume();
+            } else {
+              running++;
+            }
+          });
+          // Once every known context is running, stop listening.
+          if (running > 0 && running === audioContextList.length) {
+            userInputEventNames.forEach((name) =>
+              document.removeEventListener(name, resumeAllContexts)
+            );
+          }
+        }
+
+        userInputEventNames.forEach((name) =>
+          document.addEventListener(name, resumeAllContexts)
+        );
+      })();
+    </script>
+
     <!-- Build the `shed` binary to wasm and copy the asset folder into dist/. -->
     <link data-trunk rel="rust" data-bin="shed" data-wasm-opt="s" />
     <link data-trunk rel="copy-dir" href="assets" />

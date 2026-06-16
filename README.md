@@ -68,10 +68,13 @@ To run the web build locally:
 rustup target add wasm32-unknown-unknown
 cargo install trunk            # one-time: the wasm bundler
 ./scripts/download-fonts.sh    # fonts are gitignored — fetch them first
+./scripts/download-sfx.sh      # sound effects are gitignored — fetch them too
 trunk serve                    # serves at http://localhost:8080
 ```
 
-The web build ships silent (no bundled music track). See
+The web build has **sound effects** (bundled at build time; `index.html` resumes
+the `AudioContext` on first interaction to satisfy the browser autoplay policy)
+but no **music** (no bundled track). See
 [.github/workflows/deploy-web.yml](.github/workflows/deploy-web.yml) for the deploy
 pipeline.
 
