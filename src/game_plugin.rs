@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use crate::audio::{setup_music, toggle_music_mute, MusicMuted};
+use crate::audio::{setup_music, toggle_music_mute, update_music_layers, MusicMuted};
 use crate::sfx::{
     button_sfx, invalid_sfx, play_sfx, setup_sfx, sfx_director, SfxEvent,
 };
@@ -114,6 +114,7 @@ impl Plugin for GamePlugin {
                 update_swap_button_visibility,
                 update_header,
                 toggle_music_mute,
+                update_music_layers,
                 update_rules_info_panel,
                 apply_responsive_layout,
                 handle_info_buttons,

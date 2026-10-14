@@ -17,7 +17,6 @@ The visual + meta direction comes from the "Arcade Felt" design handoff (a Balat
 
 ```bash
 ./scripts/download-fonts.sh  # one-time: fetch font assets (not tracked in git)
-./scripts/download-music.sh  # optional: prints where to drop a lo-fi OGG track
 ./scripts/download-sfx.sh    # one-time: fetch CC0 sound effects (not tracked in git)
 cargo run                    # run the game
 cargo build                  # build only
@@ -47,7 +46,7 @@ web-only fields (`canvas`, `fit_canvas_to_parent`) that are ignored natively.
 site from a subpath; `trunk serve` defaults to `/`. The push-to-`master` deploy
 lives in `.github/workflows/deploy-web.yml` (which fetches fonts **and** sound
 effects before `trunk build` so both are bundled). The web build has **sound
-effects** but no **music** (no bundled OGG track). **One-time repo setup:**
+effects** and the **music** (the stems are tracked in git, so they ship in the bundle). **One-time repo setup:**
 Settings → Pages → Source = "GitHub Actions".
 
 The build is playable on phones, in both orientations and by touch. The layout
@@ -59,10 +58,16 @@ breakpoint also hides the rules panel on narrow screens. Card staging, pile
 pickup, swaps, and the Game-Over "any key to continue" all respond to touch as
 well as mouse/keyboard.
 
-Music is also gitignored. `scripts/download-music.sh` does not bundle a track;
-it just creates `assets/music/` and prints suggested CC0 sources. Drop a
-lo-fi OGG at `assets/music/lofi_loop.ogg` to enable background music — the
-game runs silently if the file is missing (Bevy logs a one-line warning).
+The native build ships with a bespoke soundtrack: four looping OGG stems under
+`assets/music/stems/` (pad, bass, drums, drums_alt — the last two alternate
+every loop rather than layering together), tracked in git and mixed
+dynamically at runtime by `audio.rs` based on game phase — see "Key
+Architecture Notes" below. The same code runs on the web build: the stems are
+bundled into `dist/` by Trunk's `copy-dir`, and because browsers keep the
+`AudioContext` suspended until a user gesture, `update_music_layers` holds the
+synchronized stem start until the first key/click/tap on wasm so the audio and
+the loop clock begin together. Asset load failure per stem is non-fatal —
+Bevy logs a one-line warning and that layer just stays silent.
 
 Sound effects are gitignored too. `scripts/download-sfx.sh` fetches a handful
 of Kenney CC0 clips (WAV — the `wav` Bevy feature is enabled to decode them)
@@ -74,8 +79,7 @@ silent. SFX also play on the **web** build: CI runs `download-sfx.sh` before
 the `AudioContext` constructor to resume audio on the first user interaction
 (the browser autoplay policy starts it suspended). The clips must actually be
 present for a web build (run `download-sfx.sh` before `trunk serve` locally) —
-a missing file served as the SPA fallback would choke the decoder. Music is
-still web-silent (no bundled OGG track).
+a missing file served as the SPA fallback would choke the decoder.
 
 ## Source Structure
 
@@ -84,7 +88,8 @@ src/
   main.rs                        # App entry point — 1440x900 window
   lib.rs                         # Re-exports modules so tests/ can drive them
   game_plugin.rs                 # GamePlugin: resource registration, system wiring, setup_game
-  audio.rs                       # BackgroundMusic, MusicMuted, setup_music, Ctrl+M toggle
+  audio.rs                       # MusicLayer 5-stem dynamic mix, MusicMuted, setup_music,
+                                 # update_music_layers, Ctrl+M toggle
   sfx.rs                         # SfxKind/SfxEvent, Sfx bank, sfx_director (GameState-delta cues),
                                  # button/invalid hooks, play_sfx (one-shot, graceful-missing)
   rules.rs                       # Pure predicates: can_play_card, is_burn (+ unit tests)
@@ -154,6 +159,7 @@ assets/fonts/
 - **Table layout**: human at bottom centre; three AIs spaced across the top. Hands are fanned (rotated, arced) at the near window edge. Face-down cards sit further from the play pile, face-up closer.
 - **Play pile** is anchored at `PLAY_PILE_X = 150.0`. Only the top *finished-animating* card shows its rank/suit text (`show_text`); the rest are face-up but hidden so the stack reads cleanly.
 - **Responsive sizing**: the table is laid out in a design-space rect held by the `Layout` resource ([card_renderer.rs](src/rendering/card_renderer.rs)), and the 2D camera's `ScalingMode::AutoMin { min_width, min_height }` maps that rect onto any canvas (scales down, never clips; 1:1 on a 1440-wide desktop). `update_layout` flips orientation when the window turns portrait (`height > width`): **Landscape** uses the original 1440×900 rect, **Portrait** a 720×1280 rect. The portrait seat anchors (`seat_anchor`) pack the three AIs into a compact top strip — rendered at a reduced `seat_scale` so three seats fit the narrow width — while the human stays full-size and low, so the hand + pile own the roomy bottom. Every layout helper (`card_resting_transform`, `layout_cards`, `deal_next_card`, the refill in `play.rs`) reads `Layout`/`design_height` rather than live window pixels, so positions don't drift with the AutoMin scale. Screen-space UI panels *don't* scale with the camera, so `apply_responsive_layout` ([ui/responsive.rs](src/ui/responsive.rs)) hides the bottom-left rules panel below a 760px window width. An `update_turn_chip` system parks a "whose turn" poker chip (a solid disc, deliberately distinct from the pulsing pickup highlight) just below the active seat's cards; its label reads "Your turn" for the human and the AI's name otherwise. In portrait the human hand is lifted clear of the bottom-centre Play/Done button so the two don't overlap on a phone, and the draft overlay's perk rows are width-responsive (`Val::Percent` capped by `max_width`) so they fit a narrow screen.
+- **Dynamic music mix** ([audio.rs](src/audio.rs)): four looping OGG stems, on native and web (`assets/music/stems/{pad,bass,drums,drums_alt}.ogg`, converted from Ableton exports, same 42.67s length, spawned paused at `Startup` and un-paused together in one frame by `update_music_layers` once every stem has loaded — Bevy otherwise starts each sink when *its* asset finishes loading, which measured ~140ms apart and sounded like a doubled pad) are mixed by `update_music_layers` reading `GameState::phase`/`spectate_mode` each frame. `MusicLayer::target_volume` sets each stem's target: pad-only during Dealing/Swap/Drafting, pad+bass+drums at a moderate level during a normal `Playing` round, bass+drums pushed louder once `spectate_mode` kicks in (human eliminated, AI resolving the round fast), fading back to pad-only on `GameOver`. Every frame eases each `AudioSink`'s volume toward its target at a fixed `FADE_RATE`, so phase changes and Ctrl+M mutes (which drive all targets to 0) read as crossfades, never hard cuts. `Drums` and `DrumsAlt` are never both audible — a loop counter derived from `Time::elapsed_seconds() / LOOP_DURATION_SECS` flips which one gets the "drums" slot each ~42.67s loop, so the two drum takes alternate during play (an experiment; easy to revert to a single static `drums` layer if it doesn't land). The Ableton export's other two original drum stems (`drums_1`/`drums_2`) bounced silent/near-silent (verified with `ffmpeg -af volumedetect`, not a conversion bug) and were dropped — the "Bang Some Loop" stem became `drums`, and a separately re-exported stem became `drums_alt`.
 
 ## Game Phases
 
