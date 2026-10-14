@@ -18,7 +18,7 @@ use crate::components::game::{GamePhase, GameState};
 use crate::systems::input::InvalidCardClicked;
 
 /// One-shot SFX playback volume.
-pub(crate) const SFX_VOLUME: f32 = 0.5;
+pub(crate) const SFX_VOLUME: f32 = 0.3;
 
 /// The distinct sound effects in the bank.
 #[derive(Clone, Copy, PartialEq, Eq)]

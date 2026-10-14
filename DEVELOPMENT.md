@@ -129,8 +129,12 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 
 ## Background Music
 
-- `audio.rs` owns `BackgroundMusic` + `MusicMuted` and the `setup_music` startup system, plus `toggle_music_mute` (Ctrl+M).
-- Music is **not tracked in git**; `scripts/download-music.sh` only creates `assets/music/` and prints CC0 sources. Drop a loop at `assets/music/lofi_loop.ogg` to enable it — the game runs silently (one-line Bevy warning) if the file is missing.
+- `audio.rs` owns `MusicLayer`, `MusicMuted`, the `setup_music` startup system, `update_music_layers`, and `toggle_music_mute` (Ctrl+M). Runs on native and web; on wasm the synchronized stem start additionally waits for the first user gesture (browsers keep the `AudioContext` suspended until then, and `index.html` resumes it on that same input), so the audio and the drum-swap loop clock begin together. Verified loading in `trunk serve` (all four stems 200); audible playback is checked by ear.
+- The soundtrack is four looping OGG stems under `assets/music/stems/` (`pad`, `bass`, `drums`, `drums_alt` — converted from Ableton exports, all the same 42.67s length), **tracked in git** since they're bespoke to this game rather than a swappable placeholder. `setup_music` spawns all four as silent, **paused** (`Volume::new(0.0)`) `AudioBundle`s; `update_music_layers` un-pauses them all in the same frame once every sink exists (or after `START_TIMEOUT_SECS` if a file is missing). This matters: Bevy starts a sink as soon as *its own* asset loads, and these files were measured starting ~140ms apart (bass/drums_alt at 0.218s, pad/drums at 0.360s) — audible as a doubled pad. Once started they stay phase-locked forever — nothing is ever stopped or restarted, only volumes move.
+- The Ableton export originally had 3 drum-ish stems; two (`drums_1`/`drums_2`) bounced silent/near-silent (-80dB and -91dB mean volume — checked with `ffmpeg -af volumedetect`, so it wasn't a lossy OGG conversion issue) and were dropped. The third ("Bang Some Loop") is wired up as `drums`; a separately re-exported `drums_alt` stem was added later as an experiment.
+- `Drums` and `DrumsAlt` are never both audible: `update_music_layers` derives a loop count from time since the synchronized start (the shared loop clock) divided by the measured `LOOP_DURATION_SECS` (42.666667), and an odd count flips which of the two gets the "drums" slot for that loop while the other goes silent — an experiment to hear the two drum takes alternate during play.
+- Each frame, `update_music_layers` reads `GameState::phase` and `GameState::spectate_mode` and eases every stem's `AudioSink` volume toward `MusicLayer::target_volume(phase, spectate, drums_alt_active)` at a fixed `FADE_RATE` (0.5/sec). The mix: pad-only during `Dealing`/`Swap`/`Drafting`; pad + bass + (one of the two drum stems) at a moderate level during a normal `Playing` round; bass + drums pushed louder once `spectate_mode` flips on (human eliminated, AI resolving the round at the faster 0.3s tick); pad-only again on `GameOver`. `MusicMuted` (Ctrl+M) drives every target to 0, so mute reads as a ~0.7s fade-out rather than a hard cut — and the same easing smooths the loop-boundary drum swap into a quick crossfade instead of a click.
+- `assets/music/*.ogg` (top-level, not `stems/`) stays gitignored — that's the old CC0-placeholder slot (`lofi_loop.ogg` etc. from before there was a bespoke track). Nothing in the code reads those paths anymore; they're orphaned local files, not wired to anything.
 
 ---
 
@@ -256,6 +260,7 @@ A working log of design decisions, architecture choices, and known issues. CLAUD
 | `advance_swap_phase` | flip `Swap` → `Drafting` once settled |
 | `update_swap_button_visibility` | show/hide the Done Swapping button by phase |
 | `toggle_music_mute` | Ctrl+M background-music mute |
+| `update_music_layers` | eases each music stem's volume toward its phase-driven target |
 | `update_rules_info_panel` | rewrite the bottom-left rules/buffs panel text each frame |
 
 `CardRendererPlugin` Update systems:

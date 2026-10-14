@@ -34,7 +34,7 @@ Built on the Bevy ECS (Entity Component System) game engine. The game features:
 - `src/ui/` — interactive widgets and overlays (play button, score HUD, rules panel, pile status, game over)
 - `src/rules.rs` — pure rule predicates (`can_play_card`, `is_burn`) with unit tests
 - `src/ai.rs` — per-personality AI strategy (`choose_play`)
-- `src/audio.rs` — background music + Ctrl+M mute toggle
+- `src/audio.rs` — dynamic 4-stem music mix (native + web) + Ctrl+M mute toggle
 - `src/sfx.rs` — one-shot sound effects (GameState-delta cues + input hooks; CC0, graceful-missing)
 - `src/game_plugin.rs` — `GamePlugin`: resource registration, system wiring, one-time setup
 - `src/lib.rs` — re-exports modules so the integration tests can drive them
@@ -42,8 +42,8 @@ Built on the Bevy ECS (Entity Component System) game engine. The game features:
 - `tests/` — integration tests driving real Bevy `App`s
 - `src/theme.rs` — "Arcade Felt" palette + visual helpers (single source of style truth)
 - `scripts/download-fonts.sh` — fetches the font assets (Rubik, Titan One, Silkscreen, Noto suit glyphs; not tracked in git)
-- `scripts/download-music.sh` — sets up `assets/music/` and prints CC0 track sources (optional)
 - `scripts/download-sfx.sh` — fetches the CC0 sound effects (Kenney, WAV; not tracked in git)
+- `assets/music/stems/` — four bespoke music stems (pad/bass/drums/drums_alt, OGG, tracked in git), mixed dynamically by `src/audio.rs` (the two drum stems alternate every loop)
 
 See [CLAUDE.md](CLAUDE.md) for an architecture overview and [DEVELOPMENT.md](DEVELOPMENT.md) for design notes, per-phase decisions, and outstanding work.
 
@@ -51,7 +51,6 @@ See [CLAUDE.md](CLAUDE.md) for an architecture overview and [DEVELOPMENT.md](DEV
 
 ```bash
 ./scripts/download-fonts.sh   # one-time: fetch Rubik + Silkscreen + Noto suit fonts into assets/fonts/
-./scripts/download-music.sh   # optional: set up assets/music/ for background music
 ./scripts/download-sfx.sh     # one-time: fetch CC0 sound effects into assets/sfx/
 cargo run
 cargo test                    # run the unit + integration test suite
@@ -72,9 +71,9 @@ cargo install trunk            # one-time: the wasm bundler
 trunk serve                    # serves at http://localhost:8080
 ```
 
-The web build has **sound effects** (bundled at build time; `index.html` resumes
-the `AudioContext` on first interaction to satisfy the browser autoplay policy)
-but no **music** (no bundled track). See
+The web build has **sound effects** and the **music** (both bundled at build time;
+`index.html` resumes the `AudioContext` on first interaction to satisfy the browser
+autoplay policy, and the music starts on that first click/key/tap). See
 [.github/workflows/deploy-web.yml](.github/workflows/deploy-web.yml) for the deploy
 pipeline.
 

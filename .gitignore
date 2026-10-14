@@ -10,7 +10,8 @@
 assets/fonts/*.ttf
 assets/fonts/*.otf
 
-# Music assets — see scripts/download-music.sh
+# Legacy placeholder music slot (top-level only). The bespoke stems under
+# assets/music/stems/ ARE tracked.
 assets/music/*.ogg
 assets/music/*.mp3
 assets/music/*.wav
