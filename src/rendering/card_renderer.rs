@@ -172,9 +172,13 @@ impl Layout {
     /// clears the table instead of vanishing under the next card. Sits in open
     /// felt to the side of the pile in both orientations. (x, y only; callers
     /// supply the z.)
+    ///
+    /// Landscape keeps it on the pile's own row (y = 0): the top-right AI seat
+    /// (`seat_anchor` 3, x≈440, y≈220) spans roughly x 290–590 / y 140–320, so a
+    /// pit higher than ~y 60 lands on that seat's cards.
     pub fn burn_pit(&self) -> Vec2 {
         match self.orientation {
-            Orientation::Landscape => Vec2::new(PLAY_PILE_X + 250.0, 175.0),
+            Orientation::Landscape => Vec2::new(PLAY_PILE_X + 250.0, 0.0),
             Orientation::Portrait => Vec2::new(225.0, 235.0),
         }
     }
