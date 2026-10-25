@@ -34,6 +34,7 @@ Built on the Bevy ECS (Entity Component System) game engine. The game features:
 - `src/ui/` — interactive widgets and overlays (play button, score HUD, rules panel, pile status, game over)
 - `src/rules.rs` — pure rule predicates (`can_play_card`, `is_burn`) with unit tests
 - `src/ai.rs` — per-personality AI strategy (`choose_play`)
+- `src/ui/title_screen.rs` — `AppState` + the title screen (logo, hero cards, PLAY, settings toggles)
 - `src/audio.rs` — dynamic 4-stem music mix (native + web) + Ctrl+M mute toggle
 - `src/sfx.rs` — one-shot sound effects (GameState-delta cues + input hooks; CC0, graceful-missing)
 - `src/game_plugin.rs` — `GamePlugin`: resource registration, system wiring, one-time setup
@@ -121,7 +122,7 @@ The game's look and meta direction come from the "Arcade Felt" design handoff (a
 
 - **Phase 1 — Arcade Felt reskin (done):** warm-paper cards with neon special badges + glow rings, a dark-felt table with a gold inset frame, Rubik + Silkscreen typography, chunky buttons, seat avatars with mood tags + an active-seat ring, arcade juice (score pops, burn flash, button depress), and a pile-count badge. Pure presentation — no gameplay changes — built with sprites/`bevy_ui` (no custom shaders). Palette lives in `src/theme.rs`.
 - **Phase 2 — Juice / game feel (done):** ease-out + overshoot card motion, a springy hover/stage lift, animated pickup + burn (the latter sweeping to a "burn pit"), special-resolve and turn-change pulses, a pile-rising score pop, and full CC0 sound effects (`src/sfx.rs`). All motion honours a reduced-motion setting (Ctrl+R). No rules/AI/state changes.
-- **Phase 3 — Title / main-menu screen (planned):** a dedicated start screen with play + settings (including reduced-motion).
+- **Phase 3 — Title / main-menu screen (minimal version done):** logo, hero card fan, PLAY, and music / reduced-motion toggles (`src/ui/title_screen.rs`). The Ante Ladder buttons (Continue Run / Daily / Collection) wait on Phase 4. The design handoff lives in `docs/design/arcade_felt/`.
 - **Phase 4 — Ante Ladder meta-system (planned):** antes, stakes, and hazards layered over the match loop.
 
 ## Future Improvements

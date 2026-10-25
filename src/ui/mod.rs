@@ -6,3 +6,4 @@ pub mod play_button;
 pub mod responsive;
 pub mod rules_panel;
 pub mod score_hud;
+pub mod title_screen;

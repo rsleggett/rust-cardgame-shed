@@ -10,6 +10,7 @@ use crate::systems::consumables::ConsumableCard;
 use crate::systems::play::play_selection;
 use crate::theme;
 use crate::ui::info_overlay::{InfoButton, InfoCloseButton};
+use crate::ui::title_screen::TitleButton;
 
 #[derive(Component)]
 pub(crate) struct PlayButton;
@@ -62,6 +63,7 @@ pub(crate) fn depress_buttons(
             Without<ConsumableCard>,
             Without<InfoButton>,
             Without<InfoCloseButton>,
+            Without<TitleButton>,
         ),
     >,
 ) {

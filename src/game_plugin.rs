@@ -45,6 +45,10 @@ use crate::ui::play_button::{
 use crate::ui::responsive::apply_responsive_layout;
 use crate::ui::rules_panel::{spawn_rules_info_panel, update_rules_info_panel};
 use crate::ui::score_hud::{spawn_score_hud, update_score_hud};
+use crate::ui::title_screen::{
+    animate_title_cards, despawn_title_screen, handle_title_buttons, scale_title,
+    spawn_title_screen, style_title_buttons, title_start_key, update_title_labels, AppState,
+};
 
 /// Number of seats at the table. Used both for player setup and for sizing
 /// MatchState.scores. Change this and the seat-positioning code together.
@@ -57,6 +61,7 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(CardRendererPlugin)
+            .init_state::<AppState>()
             .insert_resource(GameState::new())
             .insert_resource(MatchState::new(PLAYER_COUNT, MATCH_TARGET))
             .insert_resource(DraftState::default())
@@ -71,7 +76,7 @@ impl Plugin for GamePlugin {
             .insert_resource(MusicMuted::default())
             .add_event::<InvalidCardClicked>()
             .add_event::<SfxEvent>()
-            .add_systems(Startup, (setup_game, setup_music, setup_sfx))
+            .add_systems(Startup, (setup_game, setup_music, setup_sfx, spawn_title_screen))
             .add_systems(Update, (
                 update_hovered_card,
                 tick_last_click,
@@ -91,7 +96,7 @@ impl Plugin for GamePlugin {
                 update_score_hud,
                 game_over_screen_system,
                 restart_game_system,
-            ))
+            ).run_if(in_state(AppState::Game)))
             .add_systems(Update, (
                 // Draft + consumables — grouped because the first set is at the 20-system limit.
                 setup_draft_system,
@@ -104,7 +109,7 @@ impl Plugin for GamePlugin {
                 tick_peek_timer,
                 update_consumable_cards,
                 handle_consumable_click,
-            ))
+            ).run_if(in_state(AppState::Game)))
             .add_systems(Update, (
                 // Swap phase systems — separate block since the first two are full.
                 handle_swap_input,
@@ -113,13 +118,27 @@ impl Plugin for GamePlugin {
                 advance_swap_phase,
                 update_swap_button_visibility,
                 update_header,
+                update_rules_info_panel,
+                handle_info_buttons,
+            ).run_if(in_state(AppState::Game)))
+            .add_systems(Update, (
+                // Always on: music + mute work on the title too, and the
+                // responsive/press-juice systems are harmless there.
                 toggle_music_mute,
                 update_music_layers,
-                update_rules_info_panel,
                 apply_responsive_layout,
-                handle_info_buttons,
                 depress_buttons,
             ))
+            .add_systems(Update, (
+                // Title screen.
+                handle_title_buttons,
+                style_title_buttons,
+                title_start_key,
+                update_title_labels,
+                scale_title,
+                animate_title_cards,
+            ).run_if(in_state(AppState::Title)))
+            .add_systems(OnExit(AppState::Title), despawn_title_screen)
             .add_systems(Update, (
                 // Sound effects — derived from GameState deltas + a couple of
                 // input hooks, then fired as one-shot audio.
