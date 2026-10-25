@@ -19,8 +19,24 @@ fn monogram(name: &str) -> String {
     name.chars().next().unwrap_or('?').to_uppercase().to_string()
 }
 
+/// The round-end overlay. `shown_at` (`Time::elapsed_seconds` when it spawned)
+/// feeds the dismiss grace period below.
 #[derive(Component)]
-pub(crate) struct GameOverScreen;
+pub(crate) struct GameOverScreen {
+    shown_at: f32,
+}
+
+/// How long the overlay must have been up before an input can dismiss it.
+/// Without this, the very click / Enter that plays the final card — which can
+/// itself end the round (e.g. the human finishing second-last) — also counts as
+/// "any key to continue" on the same frame, so the round restarts before the
+/// scoreboard is ever shown or any points are awarded. Also stops a player who
+/// is mashing cards as the round ends from skipping the results by accident.
+const DISMISS_GRACE_SECS: f32 = 0.6;
+
+fn can_dismiss(shown_at: f32, now: f32) -> bool {
+    now - shown_at >= DISMISS_GRACE_SECS
+}
 
 pub(crate) fn game_over_screen_system(
     mut commands: Commands,
@@ -28,6 +44,7 @@ pub(crate) fn game_over_screen_system(
     mut match_state: ResMut<MatchState>,
     screen_q: Query<Entity, With<GameOverScreen>>,
     asset_server: Res<AssetServer>,
+    time: Res<Time>,
 ) {
     if game_state.phase != GamePhase::GameOver || !screen_q.is_empty() {
         return;
@@ -83,7 +100,7 @@ pub(crate) fn game_over_screen_system(
     };
 
     commands.spawn((
-        GameOverScreen,
+        GameOverScreen { shown_at: time.elapsed_seconds() },
         NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
@@ -305,12 +322,17 @@ pub(crate) fn restart_game_system(
     mouse: Res<ButtonInput<MouseButton>>,
     touches: Res<Touches>,
     card_q: Query<Entity, With<Card>>,
-    screen_q: Query<Entity, With<GameOverScreen>>,
+    screen_q: Query<(Entity, &GameOverScreen)>,
     status_q: Query<Entity, With<PileStatusText>>,
     avatar_q: Query<Entity, With<SeatAvatar>>,
     asset_server: Res<AssetServer>,
+    time: Res<Time>,
 ) {
     if game_state.phase != GamePhase::GameOver { return; }
+    // Only dismiss an overlay the player has actually been shown (see
+    // `DISMISS_GRACE_SECS`). Until it exists there is nothing to dismiss.
+    let Some(shown_at) = screen_q.iter().map(|(_, s)| s.shown_at).next() else { return };
+    if !can_dismiss(shown_at, time.elapsed_seconds()) { return; }
     // Any key, click, or tap advances — so the overlay is dismissable on a phone
     // that has no keyboard.
     let advance = keyboard.get_just_pressed().next().is_some()
@@ -327,7 +349,7 @@ pub(crate) fn restart_game_system(
 
     // Despawn round-scoped entities. ScoreHud persists across restarts.
     for e in card_q.iter() { commands.entity(e).despawn_recursive(); }
-    for e in screen_q.iter() { commands.entity(e).despawn_recursive(); }
+    for (e, _) in screen_q.iter() { commands.entity(e).despawn_recursive(); }
     for e in status_q.iter() { commands.entity(e).despawn_recursive(); }
 
     // MatchState transition first so that `add_match_players` reads the
@@ -369,4 +391,21 @@ pub(crate) fn restart_game_system(
             ..default()
         },
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_on_the_frame_the_overlay_appears_does_not_dismiss_it() {
+        assert!(!can_dismiss(10.0, 10.0));
+        assert!(!can_dismiss(10.0, 10.0 + DISMISS_GRACE_SECS - 0.01));
+    }
+
+    #[test]
+    fn overlay_can_be_dismissed_after_the_grace_period() {
+        assert!(can_dismiss(10.0, 10.0 + DISMISS_GRACE_SECS));
+        assert!(can_dismiss(10.0, 30.0));
+    }
 }
